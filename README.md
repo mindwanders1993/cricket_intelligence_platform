@@ -121,7 +121,71 @@ The platform is divided into eight logical layers:
 7. **Consumption and intelligence layer** — DuckDB, Superset, FastAPI, Ollama, LangChain, MLflow.[10][20][11]
 8. **Observability layer** — Prometheus, Grafana, data quality outputs, and run metadata.[17][14]
 
-### 6.2 System context diagram
+### 6.2.1 System Architecture Diagram
+
+```mermaid
+graph TD
+    %% External Data Sources
+    subgraph External[Source Systems]
+        Cricsheet[Cricsheet APIs - JSON Archives]
+        Registry[Cricsheet Person Registry - CSV]
+    end
+
+    %% Orchestration & Control Plane
+    subgraph ControlPlane[Orchestration & Governance]
+        Airflow[Apache Airflow Scheduler/Worker]
+        PG[(Postgres: Airflow DB & Iceberg Catalog)]
+        Contracts[YAML Data Contracts]
+        Airflow --> |Manages State| PG
+        Airflow -.-> |Validates against| Contracts
+    end
+
+    %% Storage Layer (Data Lake)
+    subgraph Storage[MinIO Object Storage - S3 API]
+        Landing[s3://landing/raw_json/]
+        Bronze[s3://lakehouse/bronze/matches/]
+        Silver[s3://lakehouse/silver/deliveries/]
+    end
+
+    %% Compute Layer
+    subgraph Compute[Hybrid Compute Engine]
+        Polars[Polars Ingestion Service]
+        Spark[PySpark on Kubernetes]
+    end
+
+    %% Analytical & Serving Layer
+    subgraph Serving[Gold Layer & Intelligence]
+        DBT[dbt Core Models]
+        DuckDB[(DuckDB In-Memory OLAP)]
+        Superset[Apache Superset Dashboards]
+        Langchain[LangChain Text-to-SQL Agent]
+        Ollama[Ollama Local LLM: Llama 3]
+        MLflow[MLflow Model Registry]
+    end
+
+    %% Data Flow Edges
+    Cricsheet --> |Download Zip| Landing
+    Registry --> |Download CSV| Landing
+
+    Airflow --> |Trigger| Polars
+    Landing --> |JSON Read| Polars
+    Polars --> |Write Iceberg| Bronze
+
+    Airflow --> |Trigger| Spark
+    Bronze --> |Distributed Read| Spark
+    Spark --> |Explode & Resolve Identity| Silver
+
+    Airflow --> |Trigger| DBT
+    Silver --> |Iceberg Read| DuckDB
+    DBT --> |Materialize Star Schema| DuckDB
+
+    DuckDB --> |JDBC/SQL| Superset
+    DuckDB --> |SQL| Langchain
+    Langchain <--> |Prompt| Ollama
+    DuckDB --> |Feature Extract| MLflow
+```
+
+### 6.2.2 System context diagram
 
 ```mermaid
 graph TB
