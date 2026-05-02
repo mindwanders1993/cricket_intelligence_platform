@@ -783,28 +783,53 @@ cricket-intelligence-platform/
 The most robust version of this architecture is an **open-source cricket lakehouse platform centered on MinIO, Apache Iceberg, Airflow, Polars, PySpark, DuckDB, dbt Core, Superset, MLflow, and a FastAPI/Ollama-based AI layer**. This design is technically defensible, cloud-portable, interview-ready, and flexible enough to grow from a portfolio project into a serious internal analytics platform concept.[20][10][11][12][7][9][8]
 
 Sources
+
 [1] Available match data downloads - Cricsheet https://cricsheet.org/downloads/
+
 [2] Match data - Cricsheet https://cricsheet.org/matches/
+
 [3] Match Data Formats - Cricsheet https://cricsheet.org/format/
+
 [4] Introducing the Cricsheet Register, and a new data format, JSON https://cricsheet.org/article/introducing-the-cricsheet-register-and-a-new-data-format-json/
+
 [5] Cricsheet Register https://cricsheet.org/register/
+
 [6] Cricsheet https://cricsheet.org
+
 [7] Apache Iceberg - Apache Iceberg™ https://iceberg.apache.org
+
 [8] Job orchestration with Airflow: Boost efficiency in data pipelines https://www.advsyscon.com/blog/airflow-orchestration/
+
 [9] What is dbt? | dbt Developer Hub https://docs.getdbt.com/docs/introduction
+
 [10] Welcome | Superset - Apache Software Foundation https://superset.apache.org
+
 [11] ML Model Registry | MLflow AI Platform https://mlflow.org/docs/latest/ml/model-registry/
+
 [12] Evolution - Apache Iceberg™ https://iceberg.apache.org/docs/latest/evolution/
+
 [13] Explore The Registered... https://mlflow.org/docs/latest/ml/model-registry/tutorial/
+
 [14] Airflow for ML: Automating Data & Training Workflows - Transcloud https://wetranscloud.com/blog/airflow-for-ml-automating-data-training-workflows/
+
 [15] Spec - Apache Iceberg™ https://iceberg.apache.org/spec/
+
 [16] An in-process SQL OLAP database management system https://duckdb.org
+
 [17] About the project - Cricket Scorecard Accuracy Project https://thesanctityofwickets.com/about/
+
 [18] Introduction to the JSON format - Cricsheet https://cricsheet.org/format/json/
+
 [19] Apache Superset is a Data Visualization and Data ... - GitHub https://github.com/apache/superset
+
 [20] How to Run and Customize LLMs Locally with Ollama https://www.freecodecamp.org/news/run-and-customize-llms-locally-with-ollama/
+
 [21] dbt Core vs dbt Cloud – Key Differences as of 2025 - Datacoves https://datacoves.com/post/dbt-core-key-differences
+
 [22] The Ultimate Guide to Open Table Formats - Iceberg, Delta Lake ... https://iceberglakehouse.com/posts/2025-09-ultimate-guide-to-open-table-formats/
+
 [23] Introduction to Machine Learning with MLFlow and Airflow! - YouTube https://www.youtube.com/watch?v=DgyokxdqEYc
+
 [24] Sources for Public Large Datasets | PDF | Databases - Scribd https://www.scribd.com/document/326078939/Where-to-Find-Large-Datasets-Open-to-the-Public
+
 [25] Evolution - Apache Iceberg Documentation https://apache-iceberg.mintlify.app/concepts/evolution
