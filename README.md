@@ -155,6 +155,8 @@ The platform uses a **two-plane model** that separates stateful infrastructure f
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+![Platform Architecture Clean](docs/images/platform_arch_clean.png)
+
 ### 6.3 System architecture diagram
 
 ```mermaid
