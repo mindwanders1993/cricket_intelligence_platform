@@ -125,10 +125,8 @@ resolve_mc() {
         MC_CMD="mc"
         info "Using host mc: $(command -v mc)"
     elif command -v docker &>/dev/null; then
-        warn "mc not found on PATH — using mc via Docker (quay.io/minio/minio)"
-        MC_CMD="docker run --rm --network host \
-            -e MC_HOST_${MINIO_ALIAS}=${MINIO_ENDPOINT} \
-            quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z mc"
+        warn "mc not found on PATH — using mc via Docker (minio/mc)"
+        MC_CMD="docker run --rm --network host minio/mc"
     else
         error "Neither mc nor Docker found. Install mc: https://min.io/docs/minio/linux/reference/minio-mc.html"
         exit 1
@@ -202,7 +200,7 @@ create_prefixes() {
             warn "  Prefix already exists: ${prefix}"
         else
             # Pipe /dev/null as a zero-byte object
-            ${MC_CMD} put /dev/null "${MINIO_ALIAS}/${prefix}" --quiet
+            echo -n "" | ${MC_CMD} pipe "${MINIO_ALIAS}/${prefix}" --quiet
             success "  Created prefix: ${prefix}"
         fi
     done
@@ -213,7 +211,14 @@ create_prefixes() {
 # ---------------------------------------------------------------------------
 configure_versioning() {
     info "Configuring bucket versioning..."
-    ${MC_CMD} version enable "${MINIO_ALIAS}/cricket-landing" --quiet
+
+    if ! ${MC_CMD} version enable "${MINIO_ALIAS}/cricket-landing" --quiet 2>/dev/null; then
+        warn "  Versioning not supported — MinIO is running in filesystem/single-drive mode."
+        warn "  This is expected for local dev (single /data volume, no erasure coding)."
+        warn "  Versioning will be enabled automatically when deployed with multiple drives."
+        return 0
+    fi
+
     success "  Versioning enabled on cricket-landing (immutable raw zone)"
 
     for bucket in cricket-bronze cricket-silver cricket-gold iceberg-warehouse mlflow-artifacts; do

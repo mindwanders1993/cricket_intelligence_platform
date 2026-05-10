@@ -58,7 +58,13 @@ def _check_infra(**context) -> None:
 
     # PostgreSQL connectivity
     cfg = get_settings().postgres
-    conn = psycopg2.connect(cfg.dsn)
+    conn = psycopg2.connect(
+        host=cfg.host,
+        port=cfg.port,
+        user=cfg.user,
+        password=cfg.password.get_secret_value(),
+        dbname=cfg.db,
+    )
     with conn.cursor() as cur:
         cur.execute("SELECT 1 FROM control.register_ingestion_log LIMIT 0")
     conn.close()
@@ -107,7 +113,7 @@ def _log_schema_drift_alert(**context) -> None:
 with DAG(
     dag_id="dag_ingest_cricsheet_register",
     description="Download Cricsheet Register CSVs → MinIO landing → control schema audit",
-    start_date=datetime(2026, 5, 11, 0, 30),  # 06:00 IST = 00:30 UTC
+    start_date=datetime(2026, 5, 1),  # Set to past to allow immediate execution
     schedule="30 0 * * 0",  # Weekly, Sunday 00:30 UTC
     catchup=False,
     max_active_runs=1,
@@ -173,11 +179,11 @@ airflow dags trigger dag_ingest_cricsheet_register \\
     # Task 5 — Done marker
     done = EmptyOperator(
         task_id="done",
-        trigger_rule="none_failed_min_one_success",
     )
 
     # ---------------------------------------------------------------------------
     # Dependencies
     # ---------------------------------------------------------------------------
-    check_infra >> download_and_land >> schema_drift_check >> schema_drift_alert >> done
+    check_infra >> download_and_land
+    download_and_land >> schema_drift_check >> schema_drift_alert
     download_and_land >> done

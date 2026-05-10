@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -25,7 +26,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # ---------------------------------------------------------------------------
 # Repo root resolution — works regardless of where Python is invoked from
 # ---------------------------------------------------------------------------
-_REPO_ROOT = Path(__file__).resolve().parents[2]  # platform/common/settings.py → repo root
+_REPO_ROOT = Path(
+    os.environ.get("CIP_REPO_ROOT", "")
+) if os.environ.get("CIP_REPO_ROOT") else Path(__file__).resolve().parents[3]
+
 _CONF_BASE = _REPO_ROOT / "conf" / "base"
 _ENV_FILE = _REPO_ROOT / ".env"
 
@@ -51,7 +55,7 @@ class StorageSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="MINIO_", env_file=str(_ENV_FILE), extra="ignore")
 
-    endpoint: str = Field(default="http://localhost:9000", description="MinIO API endpoint")
+    endpoint: str = Field(default="http://localhost:9000", validation_alias="MINIO_S3_ENDPOINT", description="MinIO API endpoint")
     console_url: str = Field(default="http://localhost:9001")
     root_user: str = Field(default="cricket_admin")
     root_password: SecretStr = Field(default=SecretStr("cricket_secret"))
@@ -111,7 +115,7 @@ class PostgresSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="POSTGRES_", env_file=str(_ENV_FILE), extra="ignore")
 
-    host: str = Field(default="localhost")
+    host: str = Field(default="postgres")
     port: int = Field(default=5432)
     user: str = Field(default="cricket_user")
     password: SecretStr = Field(default=SecretStr("cricket_pass"))
@@ -199,7 +203,7 @@ class MLflowSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="MLFLOW_", env_file=str(_ENV_FILE), extra="ignore")
 
-    tracking_uri: str = Field(default="http://localhost:5000")
+    tracking_uri: str = Field(default="http://localhost:5001")
     experiment_prefix: str = Field(default="cricket-platform")
     artifact_root: str = Field(default="s3://mlflow-artifacts/")
     registry_uri: str = Field(default="")
@@ -221,7 +225,9 @@ class AISettings(BaseSettings):
     ollama_timeout_seconds: int = Field(default=120)
     embedding_model: str = Field(default="nomic-embed-text")
     max_sql_result_rows: int = Field(default=500)
-    prompt_registry_path: Path = Field(default=_REPO_ROOT / "platform" / "serving" / "ai" / "prompt_registry")
+    prompt_registry_path: Path = Field(
+        default=_REPO_ROOT / "src" / "cip" / "serving" / "ai" / "prompt_registry"
+    )
 
 
 class PathSettings(BaseSettings):
@@ -231,7 +237,7 @@ class PathSettings(BaseSettings):
 
     repo_root: Path = Field(default=_REPO_ROOT)
     conf_base: Path = Field(default=_CONF_BASE)
-    platform_dir: Path = Field(default=_REPO_ROOT / "platform")
+    platform_dir: Path = Field(default=_REPO_ROOT / "src" / "cip")
     storage_dir: Path = Field(default=_REPO_ROOT / "storage")
     duckdb_dir: Path = Field(default=_REPO_ROOT / "storage" / "duckdb")
     artifacts_dir: Path = Field(default=_REPO_ROOT / "storage" / "artifacts")

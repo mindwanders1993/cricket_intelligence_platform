@@ -823,6 +823,17 @@ Terraform IaC for EKS, S3, RDS, Glue Catalog, IAM. Migrate config endpoints. Val
 ### Phase 7 — Portfolio hardening
 Observability dashboards, runbooks, CI/CD, interview demo assets, polished README diagrams, resume bullets.
 
-## 21. Architecture review summary
+## 21. Operational Note: Host vs. Container Environment Variables
+
+A common source of configuration errors is the distinction between how the **Host machine** (your MacBook) and **Docker containers** reach services like PostgreSQL or MinIO.
+
+- **From the Host:** Services are reachable via `localhost` (e.g., `POSTGRES_HOST=localhost`).
+- **From inside Docker:** Services must be reached via their **Docker service names** defined in `docker-compose.yml` (e.g., `POSTGRES_HOST=postgres`).
+
+The platform's `.env.example` and Compose files are configured to handle this by default:
+- `.env` should generally use `localhost` for tools running on your host (IDE, local scripts).
+- `docker-compose.yml` uses environment variable overrides (like `${POSTGRES_HOST:-postgres}`) to ensure containers use internal service names regardless of what is in your `.env`.
+
+## 22. Architecture review summary
 
 The most robust version of this architecture is an **open-source cricket lakehouse platform centered on AWS S3 / Apache Iceberg / Airflow (KubernetesExecutor) / Polars / PySpark-on-Kubernetes / DuckDB / dbt Core / Superset / MLflow / and a FastAPI-LangChain AI layer**. The platform is developed locally using Docker Compose for stateful infrastructure and Docker Desktop Kubernetes for compute workloads, then deployed to AWS EKS + EMR + S3 + Glue Catalog with near-zero code changes. This design is technically defensible, cloud-portable, Kubernetes-native, interview-ready, and demonstrates senior-level engineering discipline from ingestion through AI/ML serving.
