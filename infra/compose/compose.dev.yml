@@ -7,24 +7,43 @@ services:
 
   # Override: mount platform source code live into airflow containers
   airflow-webserver:
+    environment:
+      PYTHONPATH: /opt/airflow/src
+      _PIP_ADDITIONAL_REQUIREMENTS: >-
+        pydantic-settings==2.14.1
+        psycopg2-binary==2.9.12
+        httpx==0.28.1
+        boto3==1.43.6
+        structlog==24.4.0
+        python-dotenv==1.2.2
+        PyYAML==6.0.3
     volumes:
       - ../../orchestration/airflow/dags:/opt/airflow/dags
       - ../../orchestration/airflow/plugins:/opt/airflow/plugins
-      - ../../platform:/opt/airflow/platform
+      - ../../src:/opt/airflow/src
       - ../../conf:/opt/airflow/conf
       - airflow_logs:/opt/airflow/logs
 
   airflow-scheduler:
+    environment:
+      PYTHONPATH: /opt/airflow/src
+      _PIP_ADDITIONAL_REQUIREMENTS: >-
+        pydantic-settings==2.14.1
+        psycopg2-binary==2.9.12
+        httpx==0.28.1
+        boto3==1.43.6
+        structlog==24.4.0
+        python-dotenv==1.2.2
+        PyYAML==6.0.3
     volumes:
       - ../../orchestration/airflow/dags:/opt/airflow/dags
       - ../../orchestration/airflow/plugins:/opt/airflow/plugins
-      - ../../platform:/opt/airflow/platform
+      - ../../src:/opt/airflow/src
       - ../../conf:/opt/airflow/conf
       - airflow_logs:/opt/airflow/logs
 
   # ---------------------------------------------------------------------------
   # MinIO bucket bootstrapper — runs once, creates all required buckets/prefixes.
-  # Uses mc (MinIO Client) via the official MinIO image's mc binary.
   # ---------------------------------------------------------------------------
   minio-init:
     image: quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
@@ -42,14 +61,12 @@ services:
       - |
         /usr/bin/mc alias set local http://${MINIO_HOST}:${MINIO_API_PORT} \
           ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
-        # Core data lake buckets
         /usr/bin/mc mb --ignore-existing local/cricket-landing &&
         /usr/bin/mc mb --ignore-existing local/cricket-bronze &&
         /usr/bin/mc mb --ignore-existing local/cricket-silver &&
         /usr/bin/mc mb --ignore-existing local/cricket-gold &&
         /usr/bin/mc mb --ignore-existing local/iceberg-warehouse &&
         /usr/bin/mc mb --ignore-existing local/mlflow-artifacts &&
-        # Landing zone prefixes (touch placeholder objects to create "folders")
         /usr/bin/mc put /dev/null local/cricket-landing/raw_zips/.keep &&
         /usr/bin/mc put /dev/null local/cricket-landing/extracted_json/.keep &&
         /usr/bin/mc put /dev/null local/cricket-landing/register_csv/.keep &&
@@ -58,7 +75,6 @@ services:
 
   # ---------------------------------------------------------------------------
   # MLflow Tracking Server
-  # Artifacts stored in MinIO, metadata in PostgreSQL.
   # ---------------------------------------------------------------------------
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.14.1
@@ -91,12 +107,27 @@ services:
       start_period: 30s
 
   # ---------------------------------------------------------------------------
-  # DuckDB is a library — no container needed.
-  # This stub documents that the storage/duckdb volume is bind-mounted
-  # so the host DuckDB file persists across sessions.
+  # pgAdmin — PostgreSQL web UI
   # ---------------------------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:8.6
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@cricket-platform.local
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ../../infra/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
 
 volumes:
   airflow_logs:
   minio_data:
   postgres_data:
+  pgadmin_data:

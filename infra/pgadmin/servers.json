@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Cricket Platform",
+      "Group": "Docker",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "cricket_platform",
+      "Username": "cricket_user",
+      "PassFile": "/dev/null",
+      "SSLMode": "prefer"
+    }
+  }
+}
