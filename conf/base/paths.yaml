@@ -1,0 +1,20 @@
+# conf/base/paths.yaml
+# Repo-relative path constants. These are resolved relative to repo root at runtime.
+# Rarely need overriding — here for documentation and IDE discoverability.
+
+storage:
+  duckdb: "storage/duckdb"
+  artifacts: "storage/artifacts"
+  external: "storage/external"
+
+platform:
+  root: "platform"
+  ingestion: "platform/ingestion"
+  transform: "platform/transform"
+  serving: "platform/serving"
+
+models:
+  dbt_project: "models/dbt"
+  dbt_profiles: "models/dbt/profiles"
+
+notebooks: "notebooks"

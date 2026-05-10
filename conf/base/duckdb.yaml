@@ -1,0 +1,41 @@
+# conf/base/duckdb.yaml
+# DuckDB analytical engine defaults for the Cricket Intelligence Platform.
+# Override via DUCKDB_* environment variables or .env file.
+# Reference: platform/common/settings.py → DuckDBSettings
+
+database:
+  path: "storage/duckdb/cricket.duckdb"   # relative to repo root
+  read_only: false                         # true for FastAPI serving endpoints
+
+resources:
+  memory_limit: "2GB"
+  threads: 4
+  temp_directory: "storage/duckdb/tmp"
+
+# ---------------------------------------------------------------------------
+# S3 / MinIO access — DuckDB reads Iceberg tables directly from MinIO
+# Credentials are injected at runtime from StorageSettings
+# ---------------------------------------------------------------------------
+s3:
+  endpoint: "localhost:9000"          # no http:// prefix — DuckDB SET syntax
+  use_ssl: false
+  url_style: "path"
+  region: "us-east-1"
+
+# ---------------------------------------------------------------------------
+# Extensions — loaded on every DuckDB connection init
+# Run infra/bootstrap/init-duckdb.sql once to INSTALL them
+# ---------------------------------------------------------------------------
+extensions:
+  - "httpfs"
+  - "iceberg"
+  - "aws"
+
+# ---------------------------------------------------------------------------
+# Serving layer config
+# platform/serving/duckdb/refresh.py reads these to manage view lifecycle
+# ---------------------------------------------------------------------------
+serving:
+  max_result_rows: 50000              # cap on rows returned to FastAPI
+  query_timeout_seconds: 30
+  auto_refresh_interval_minutes: 60  # how often refresh.py re-registers views

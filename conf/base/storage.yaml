@@ -1,0 +1,42 @@
+# conf/base/storage.yaml
+# Default storage configuration for the Cricket Intelligence Platform.
+# Values here are the dev defaults. Override via .env or environment variables.
+# All MINIO_* and ICEBERG_* env vars take priority over these values.
+
+minio:
+  endpoint: "http://localhost:9000"
+  console_url: "http://localhost:9001"
+  root_user: "cricket_admin"
+  region: "us-east-1"
+  path_style: true
+  use_ssl: false
+
+  buckets:
+    landing: "cricket-landing"
+    bronze: "cricket-bronze"
+    silver: "cricket-silver"
+    gold: "cricket-gold"
+    iceberg_warehouse: "iceberg-warehouse"
+    mlflow_artifacts: "mlflow-artifacts"
+
+  prefixes:
+    raw_zips: "raw_zips"
+    extracted_json: "extracted_json"
+    register_csv: "register_csv"
+
+iceberg:
+  rest_uri: "http://localhost:8181"
+  warehouse_bucket: "iceberg-warehouse"
+  catalog_name: "cricket"
+  namespaces:
+    bronze: "bronze"
+    silver: "silver"
+    gold: "gold"
+
+postgres:
+  host: "localhost"
+  port: 5432
+  db: "cricket_platform"
+  pool_size: 5
+  max_overflow: 10
+  connect_timeout: 10

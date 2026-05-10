@@ -1,0 +1,40 @@
+# conf/base/airflow.yaml
+# Airflow orchestration defaults for the Cricket Intelligence Platform.
+# Override via AIRFLOW_* environment variables or .env file.
+# Reference: platform/common/settings.py → AirflowSettings
+
+webserver:
+  url: "http://localhost:8080"
+  expose_config: false
+  secret_key: ""                      # REQUIRED — set in .env as AIRFLOW_SECRET_KEY
+
+auth:
+  admin_user: "admin"
+  admin_email: "admin@cricket-platform.local"
+  # admin_password: set in .env as AIRFLOW_ADMIN_PASSWORD
+
+core:
+  executor: "LocalExecutor"           # LocalExecutor for dev; CeleryExecutor for scale
+  dags_folder: "/opt/airflow/dags"
+  load_examples: false
+  fernet_key: ""                      # REQUIRED — set in .env as AIRFLOW_FERNET_KEY
+  dag_discovery_safe_mode: true
+  default_timezone: "Asia/Kolkata"
+
+scheduler:
+  min_file_process_interval: 30       # seconds between DAG file re-parsing
+  dag_dir_list_interval: 60           # seconds between scanning dags_folder
+  catchup_by_default: false           # new DAGs do NOT backfill by default
+
+pools:
+  default_pool_slots: 4               # concurrent task slots in default pool
+  ingestion_pool_slots: 2             # dedicated pool for ingestion tasks
+  spark_pool_slots: 1                 # one Spark job at a time on local dev
+
+timeouts:
+  dag_run_timeout_minutes: 120        # max wall-clock time per DAG run
+  task_timeout_minutes: 60            # per-task timeout
+
+logging:
+  level: "INFO"
+  # Airflow logs go to airflow_logs volume — mounted in compose.base.yml

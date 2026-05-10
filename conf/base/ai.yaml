@@ -1,0 +1,57 @@
+# conf/base/ai.yaml
+# AI assistant defaults for the Cricket Intelligence Platform.
+# Override via AI_* environment variables or .env file.
+# Reference: platform/common/settings.py → AISettings
+
+ollama:
+  base_url: "http://localhost:11434"
+  model: "llama3.1:8b"                # default inference model
+  timeout_seconds: 120
+  num_ctx: 4096                       # context window tokens
+  temperature: 0.1                    # low temp for analytical Q&A
+  # For richer responses use "llama3.1:70b" if hardware allows
+
+embeddings:
+  model: "nomic-embed-text"           # embedding model for semantic search
+  dimensions: 768
+  batch_size: 32
+
+# ---------------------------------------------------------------------------
+# Guardrails — what the AI layer is allowed to touch
+# ---------------------------------------------------------------------------
+guardrails:
+  allowed_schemas:
+    - "gold"                          # AI reads ONLY Gold marts
+    - "serving"                       # and serving layer views
+  denied_schemas:
+    - "bronze"
+    - "silver"
+    - "raw"
+  max_sql_result_rows: 500            # cap rows returned to LLM context
+  read_only: true                     # all AI DuckDB connections are read-only
+  log_all_prompts: true               # log every prompt for audit
+
+# ---------------------------------------------------------------------------
+# Query modes — from AIQueryMode enum
+# template: pre-approved SQL templates only (safest)
+# semantic:  semantic layer mapping + LLM reasoning
+# freeform:  full text-to-SQL (dev/eval only)
+# ---------------------------------------------------------------------------
+query:
+  default_mode: "template"
+  allow_freeform_in_dev: true
+  allow_freeform_in_prod: false
+
+# ---------------------------------------------------------------------------
+# Prompt registry
+# ---------------------------------------------------------------------------
+prompt_registry:
+  path: "platform/serving/ai/prompt_registry"
+  reload_on_startup: true
+
+# ---------------------------------------------------------------------------
+# Semantic layer metadata
+# ---------------------------------------------------------------------------
+semantic_layer:
+  path: "platform/serving/ai/semantic_layer"
+  cache_ttl_seconds: 3600             # refresh semantic context every hour

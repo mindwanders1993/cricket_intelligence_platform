@@ -1,0 +1,52 @@
+# conf/base/spark.yaml
+# PySpark job defaults for the Cricket Intelligence Platform.
+# Override via SPARK_* environment variables or .env file.
+# Reference: platform/common/settings.py → SparkSettings
+
+master: "local[*]"                    # local dev: use all cores
+                                      # prod: "spark://spark-master:7077"
+app_name_prefix: "cricket-platform"   # job names become "{prefix}-{job_name}"
+
+driver:
+  memory: "2g"
+  max_result_size: "1g"
+  extra_java_options: "-XX:+UseG1GC"
+
+executor:
+  memory: "2g"
+  cores: 2
+  instances: 1                        # local mode ignores this
+
+shuffle:
+  partitions: 50                      # default 200 is too high for local dev
+                                      # increase for Silver full-history backfill
+
+# ---------------------------------------------------------------------------
+# Iceberg + AWS SDK jar versions
+# Must stay in sync — mismatches cause ClassNotFound at runtime
+# ---------------------------------------------------------------------------
+versions:
+  iceberg: "1.5.0"
+  hadoop_aws: "3.3.4"
+  aws_java_sdk: "1.12.262"
+  scala: "2.12"
+  spark: "3.5"
+
+# Derived JAR coordinates (used in SparkSettings.iceberg_jar property)
+# org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0
+# org.apache.hadoop:hadoop-aws:3.3.4
+# com.amazonaws:aws-java-sdk-bundle:1.12.262
+
+s3:
+  endpoint: "http://localhost:9000"   # overridden by MINIO_ENDPOINT in real runs
+  path_style_access: true
+  region: "us-east-1"
+
+iceberg:
+  catalog_name: "cricket"
+  rest_uri: "http://localhost:8181"
+  warehouse: "s3://iceberg-warehouse/"
+
+logging:
+  level: "WARN"                       # suppress Spark INFO noise in dev
+  py4j_level: "ERROR"
