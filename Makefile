@@ -1,7 +1,7 @@
 ENV_FILE ?= .env
 COMPOSE_BASE := infra/compose/compose.base.yml
 COMPOSE_DEV := infra/compose/compose.dev.yml
-COMPOSE_CMD := docker compose -f $(COMPOSE_BASE) -f $(COMPOSE_DEV)
+COMPOSE_CMD := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_BASE) -f $(COMPOSE_DEV)
 
 .PHONY: up down bootstrap lint test pre-commit
 
@@ -16,6 +16,18 @@ bootstrap:
 	@echo "Running bootstrap scripts (buckets, control schema)..."
 	@bash infra/bootstrap/create-buckets.sh
 	@psql "$$POSTGRES_CONNECTION_URI" -f infra/bootstrap/init-metastore.sql
+
+## Run PostgreSQL control schema DDL (idempotent)
+bootstrap-db:
+	@echo "Running init-metastore.sql against PostgreSQL..."
+	docker compose --env-file $(ENV_FILE) -f infra/compose/compose.base.yml exec -T postgres \
+		psql -U $${POSTGRES_USER:-cricket_user} -d $${POSTGRES_DB:-cricket_platform} \
+		-f /dev/stdin < infra/bootstrap/init-metastore.sql
+	@echo "✓ Control schema ready"
+
+## Run full bootstrap: MinIO buckets + PostgreSQL control schema
+bootstrap-all: bootstrap bootstrap-db
+	@echo "✓ Full bootstrap complete — MinIO + PostgreSQL ready"
 
 lint:
 	poetry run ruff check .
