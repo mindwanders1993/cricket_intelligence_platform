@@ -745,6 +745,30 @@ class MinIOClient:
         all files; the DAG task filters against the control DB.
         """
         return self.list_landing_json_files(snapshot_date)
+    
+    def read_object(self, object_key: str, bucket: str | None = None) -> bytes:
+        """
+        Read a landing-zone object by key into memory.
+
+        A platform-aware wrapper around read_bytes() that resolves the
+        bucket from settings when not explicitly provided. Intended for
+        normalize.py and any other module that reads from the landing zone
+        by object key alone (without needing to know the bucket name).
+
+        Args:
+            object_key: Full S3 key, e.g.
+                        "register_csv/snapshot_date=2026-05-11/people.csv"
+            bucket:     Override bucket. Defaults to cfg.bucket_landing.
+
+        Returns:
+            Raw bytes of the object.
+
+        Raises:
+            ObjectNotFoundError: If the object does not exist.
+        """
+        cfg = get_settings().storage
+        resolved_bucket = bucket or cfg.bucket_landing
+        return self.read_bytes(resolved_bucket, object_key)
 
     # -----------------------------------------------------------------------
     # Internal helpers
