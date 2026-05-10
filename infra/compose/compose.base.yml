@@ -5,6 +5,8 @@
 
 x-common-env: &common-env
   TZ: Asia/Kolkata
+  POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+  MINIO_S3_ENDPOINT: ${MINIO_S3_ENDPOINT:-http://minio:9000}
 
 x-restart-policy: &restart-policy
   restart: unless-stopped

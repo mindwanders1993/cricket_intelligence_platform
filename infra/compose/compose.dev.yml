@@ -8,6 +8,7 @@ services:
   # Override: mount platform source code live into airflow containers
   airflow-webserver:
     environment:
+      CIP_REPO_ROOT: /opt/airflow
       PYTHONPATH: /opt/airflow/src
       _PIP_ADDITIONAL_REQUIREMENTS: >-
         pydantic-settings==2.14.1
@@ -26,6 +27,7 @@ services:
 
   airflow-scheduler:
     environment:
+      CIP_REPO_ROOT: /opt/airflow
       PYTHONPATH: /opt/airflow/src
       _PIP_ADDITIONAL_REQUIREMENTS: >-
         pydantic-settings==2.14.1
@@ -46,20 +48,18 @@ services:
   # MinIO bucket bootstrapper — runs once, creates all required buckets/prefixes.
   # ---------------------------------------------------------------------------
   minio-init:
-    image: quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
+    image: minio/mc:RELEASE.2024-10-02T08-27-28Z
     depends_on:
       minio:
         condition: service_healthy
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      MINIO_HOST: ${MINIO_HOST:-minio}
-      MINIO_API_PORT: ${MINIO_API_PORT:-9000}
     entrypoint: /bin/sh
     command:
       - -c
       - |
-        /usr/bin/mc alias set local http://${MINIO_HOST}:${MINIO_API_PORT} \
+        /usr/bin/mc alias set local http://minio:9000 \
           ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
         /usr/bin/mc mb --ignore-existing local/cricket-landing &&
         /usr/bin/mc mb --ignore-existing local/cricket-bronze &&

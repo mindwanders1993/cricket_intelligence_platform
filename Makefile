@@ -15,7 +15,7 @@ down:
 bootstrap:
 	@echo "Running bootstrap scripts (buckets, control schema)..."
 	@bash infra/bootstrap/create-buckets.sh
-	@psql "$$POSTGRES_CONNECTION_URI" -f infra/bootstrap/init-metastore.sql
+	@$(MAKE) bootstrap-db
 
 ## Run PostgreSQL control schema DDL (idempotent)
 bootstrap-db:
