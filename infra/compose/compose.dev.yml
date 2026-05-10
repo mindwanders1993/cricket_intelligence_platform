@@ -1,0 +1,102 @@
+# infra/compose/compose.dev.yml
+# Development overrides for the Cricket Intelligence Platform.
+# Usage: docker compose -f infra/compose/compose.base.yml -f infra/compose/compose.dev.yml up
+# Extends base.yml with: hot-reload mounts, MLflow, bucket bootstrapper.
+
+services:
+
+  # Override: mount platform source code live into airflow containers
+  airflow-webserver:
+    volumes:
+      - ../../orchestration/airflow/dags:/opt/airflow/dags
+      - ../../orchestration/airflow/plugins:/opt/airflow/plugins
+      - ../../platform:/opt/airflow/platform
+      - ../../conf:/opt/airflow/conf
+      - airflow_logs:/opt/airflow/logs
+
+  airflow-scheduler:
+    volumes:
+      - ../../orchestration/airflow/dags:/opt/airflow/dags
+      - ../../orchestration/airflow/plugins:/opt/airflow/plugins
+      - ../../platform:/opt/airflow/platform
+      - ../../conf:/opt/airflow/conf
+      - airflow_logs:/opt/airflow/logs
+
+  # ---------------------------------------------------------------------------
+  # MinIO bucket bootstrapper — runs once, creates all required buckets/prefixes.
+  # Uses mc (MinIO Client) via the official MinIO image's mc binary.
+  # ---------------------------------------------------------------------------
+  minio-init:
+    image: quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_HOST: ${MINIO_HOST:-minio}
+      MINIO_API_PORT: ${MINIO_API_PORT:-9000}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        /usr/bin/mc alias set local http://${MINIO_HOST}:${MINIO_API_PORT} \
+          ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
+        # Core data lake buckets
+        /usr/bin/mc mb --ignore-existing local/cricket-landing &&
+        /usr/bin/mc mb --ignore-existing local/cricket-bronze &&
+        /usr/bin/mc mb --ignore-existing local/cricket-silver &&
+        /usr/bin/mc mb --ignore-existing local/cricket-gold &&
+        /usr/bin/mc mb --ignore-existing local/iceberg-warehouse &&
+        /usr/bin/mc mb --ignore-existing local/mlflow-artifacts &&
+        # Landing zone prefixes (touch placeholder objects to create "folders")
+        /usr/bin/mc put /dev/null local/cricket-landing/raw_zips/.keep &&
+        /usr/bin/mc put /dev/null local/cricket-landing/extracted_json/.keep &&
+        /usr/bin/mc put /dev/null local/cricket-landing/register_csv/.keep &&
+        echo "✅ MinIO buckets and prefixes initialized."
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # MLflow Tracking Server
+  # Artifacts stored in MinIO, metadata in PostgreSQL.
+  # ---------------------------------------------------------------------------
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.14.1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB}
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: s3://mlflow-artifacts/
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      MLFLOW_S3_ENDPOINT_URL: http://${MINIO_HOST:-minio}:9000
+      AWS_S3_PATH_STYLE_ACCESS: "true"
+    command: >
+      mlflow server
+        --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB}
+        --default-artifact-root s3://mlflow-artifacts/
+        --host 0.0.0.0
+        --port 5000
+    ports:
+      - "${MLFLOW_PORT:-5000}:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # DuckDB is a library — no container needed.
+  # This stub documents that the storage/duckdb volume is bind-mounted
+  # so the host DuckDB file persists across sessions.
+  # ---------------------------------------------------------------------------
+
+volumes:
+  airflow_logs:
+  minio_data:
+  postgres_data:

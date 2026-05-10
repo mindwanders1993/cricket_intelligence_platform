@@ -1,0 +1,40 @@
+# conf/base/polars.yaml
+# Polars ingestion engine defaults for the Cricket Intelligence Platform.
+# Override via POLARS_* environment variables or .env file.
+# Reference: platform/common/settings.py → PolarsSettings
+
+execution:
+  max_threads: 4                      # Polars global thread pool
+                                      # set to CPU count in prod
+  streaming_chunk_size: 10000         # rows per chunk in streaming mode
+  infer_schema_length: 1000           # rows sampled for schema inference
+
+# ---------------------------------------------------------------------------
+# JSON parsing config
+# Used by platform/transform/polars/bronze/match_documents.py
+# ---------------------------------------------------------------------------
+json:
+  ignore_errors: false                # fail fast on malformed JSON in dev
+  # set true in prod to skip and log bad files rather than abort the run
+
+# ---------------------------------------------------------------------------
+# CSV parsing config
+# Used by platform/ingestion/register/ modules for Cricsheet Register CSVs
+# ---------------------------------------------------------------------------
+csv:
+  has_header: true
+  separator: ","
+  null_values:
+    - ""
+    - "NA"
+    - "N/A"
+    - "null"
+  infer_schema_length: 1000
+  try_parse_dates: false              # Register CSVs have no date columns
+
+# ---------------------------------------------------------------------------
+# I/O config for MinIO reads (Polars cloud storage)
+# ---------------------------------------------------------------------------
+cloud:
+  retries: 3
+  retry_backoff_ms: 500

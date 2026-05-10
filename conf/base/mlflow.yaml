@@ -1,0 +1,37 @@
+# conf/base/mlflow.yaml
+# MLflow tracking server defaults for the Cricket Intelligence Platform.
+# Override via MLFLOW_* environment variables or .env file.
+# Reference: platform/common/settings.py → MLflowSettings
+
+tracking:
+  uri: "http://localhost:5000"
+  registry_uri: ""                    # defaults to tracking_uri if empty
+
+artifacts:
+  root: "s3://mlflow-artifacts/"
+  # Credentials for MinIO artifact store are injected from StorageSettings
+
+experiments:
+  prefix: "cricket-platform"          # all experiment names prefixed with this
+  # Convention: {prefix}/{workstream}/{model_name}
+  # e.g. cricket-platform/win-probability/xgboost-v1
+
+  default_tags:
+    project: "cricket-intelligence-platform"
+    env: "dev"
+
+# ---------------------------------------------------------------------------
+# Model registry conventions
+# ---------------------------------------------------------------------------
+registry:
+  staging_alias: "challenger"         # model awaiting evaluation
+  production_alias: "champion"        # model serving predictions
+  archive_alias: "archived"           # retired models
+
+# ---------------------------------------------------------------------------
+# Run retention
+# How long to keep MLflow run artifacts in MinIO
+# ---------------------------------------------------------------------------
+retention:
+  keep_best_n_per_experiment: 5       # keep top N runs by metric
+  artifact_ttl_days: 90               # delete artifact files older than this

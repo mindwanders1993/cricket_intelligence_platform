@@ -1,0 +1,190 @@
+# infra/compose/compose.base.yml
+# Base service definitions for the Cricket Intelligence Platform.
+# Do NOT run this file directly — it is extended by compose.dev.yml or compose.prod.yml.
+# All environment values are injected from the root .env file.
+
+x-common-env: &common-env
+  TZ: Asia/Kolkata
+
+x-restart-policy: &restart-policy
+  restart: unless-stopped
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Object Storage — MinIO (S3-compatible)
+  # Hosts landing, bronze, silver, gold prefixes as bucket paths.
+  # ---------------------------------------------------------------------------
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
+    <<: *restart-policy
+    environment:
+      <<: *common-env
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Control Metadata DB — PostgreSQL
+  # Hosts Airflow metadata DB + platform control schema (ingestion log, DQ, etc.)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    <<: *restart-policy
+    environment:
+      <<: *common-env
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../infra/bootstrap/init-metastore.sql:/docker-entrypoint-initdb.d/01-init-metastore.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Iceberg REST Catalog — catalog-rest (Apache Iceberg catalog server)
+  # Talks to MinIO for file storage, PostgreSQL for catalog persistence.
+  # ---------------------------------------------------------------------------
+  iceberg-rest:
+    image: tabulario/iceberg-rest:0.10.0
+    <<: *restart-policy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      CATALOG_CATALOG__IMPL: org.apache.iceberg.jdbc.JdbcCatalog
+      CATALOG_URI: jdbc:postgresql://${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB}
+      CATALOG_JDBC_USER: ${POSTGRES_USER}
+      CATALOG_JDBC_PASSWORD: ${POSTGRES_PASSWORD}
+      CATALOG_WAREHOUSE: s3://${ICEBERG_WAREHOUSE_BUCKET:-iceberg-warehouse}/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_S3_ENDPOINT: http://${MINIO_HOST:-minio}:9000
+      AWS_S3_PATH_STYLE_ACCESS: "true"
+    ports:
+      - "${ICEBERG_REST_PORT:-8181}:8181"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/v1/config"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Airflow — shared init (DB migration + admin user creation)
+  # Runs once on first boot, then exits. Gated by postgres health.
+  # ---------------------------------------------------------------------------
+  airflow-init:
+    image: apache/airflow:2.9.3-python3.11
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create \
+          --username ${AIRFLOW_ADMIN_USER:-admin} \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email ${AIRFLOW_ADMIN_EMAIL:-admin@cricket-platform.local} \
+          --password ${AIRFLOW_ADMIN_PASSWORD} || true
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # Airflow Webserver
+  # ---------------------------------------------------------------------------
+  airflow-webserver:
+    image: apache/airflow:2.9.3-python3.11
+    <<: *restart-policy
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: &airflow-common-env
+      <<: *common-env
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+    volumes:
+      - ../../orchestration/airflow/dags:/opt/airflow/dags:ro
+      - ../../orchestration/airflow/plugins:/opt/airflow/plugins:ro
+      - airflow_logs:/opt/airflow/logs
+    ports:
+      - "${AIRFLOW_WEBSERVER_PORT:-8080}:8080"
+    command: webserver
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Airflow Scheduler
+  # ---------------------------------------------------------------------------
+  airflow-scheduler:
+    image: apache/airflow:2.9.3-python3.11
+    <<: *restart-policy
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *airflow-common-env
+    volumes:
+      - ../../orchestration/airflow/dags:/opt/airflow/dags:ro
+      - ../../orchestration/airflow/plugins:/opt/airflow/plugins:ro
+      - airflow_logs:/opt/airflow/logs
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  minio_data:
+    driver: local
+  postgres_data:
+    driver: local
+  airflow_logs:
+    driver: local

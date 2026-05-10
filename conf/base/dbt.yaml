@@ -1,0 +1,40 @@
+# conf/base/dbt.yaml
+# dbt Core defaults for the Cricket Intelligence Platform.
+# Override via DBT_* environment variables or .env file.
+# Reference: platform/common/settings.py → DbtSettings
+
+project:
+  dir: "models/dbt"                   # relative to repo root
+  profiles_dir: "models/dbt/profiles"
+  project_name: "cricket_platform"
+
+execution:
+  target: "dev"                       # dev | prod — matches profiles.yml target
+  threads: 4                          # parallel model execution
+  fail_fast: false                    # continue running unaffected models on failure
+
+# ---------------------------------------------------------------------------
+# dbt model path conventions — must match models/dbt/dbt_project.yml
+# ---------------------------------------------------------------------------
+paths:
+  models: "models"
+  seeds: "seeds"
+  snapshots: "snapshots"
+  analyses: "analyses"
+  macros: "macros"
+  tests: "tests"
+  docs: "docs"
+
+# ---------------------------------------------------------------------------
+# Materialisation defaults per layer
+# These are documentation — actual defaults live in dbt_project.yml
+# ---------------------------------------------------------------------------
+materialisation_defaults:
+  staging: "view"
+  intermediate: "ephemeral"
+  marts_dimensions: "table"
+  marts_facts: "incremental"
+  marts_analytics: "table"
+
+# dbt docs serve port
+docs_port: 8082
