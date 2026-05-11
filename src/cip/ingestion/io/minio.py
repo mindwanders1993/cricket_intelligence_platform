@@ -29,12 +29,7 @@ import boto3
 import botocore.exceptions
 from botocore.config import Config
 
-from cip.common.exceptions import (
-    BucketNotFoundError,
-    ObjectNotFoundError,
-    ObjectUploadError,
-    StorageError,
-)
+from cip.common.exceptions import BucketNotFoundError, ObjectNotFoundError, ObjectUploadError, StorageError
 from cip.common.logging import get_logger
 from cip.common.settings import get_settings
 
@@ -745,7 +740,7 @@ class MinIOClient:
         all files; the DAG task filters against the control DB.
         """
         return self.list_landing_json_files(snapshot_date)
-    
+
     def read_object(self, object_key: str, bucket: str | None = None) -> bytes:
         """
         Read a landing-zone object by key into memory.

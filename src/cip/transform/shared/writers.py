@@ -23,17 +23,15 @@ from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 
 from cip.common.contracts.enums import Layer
-from cip.common.contracts.naming import (
-    META,
-    IcebergProperties,
-    TableName,
-)
+from cip.common.contracts.naming import META, IcebergProperties, TableName
 from cip.common.exceptions import IcebergError
 from cip.common.logging import get_context, get_logger
 from cip.common.settings import get_settings
 
 if TYPE_CHECKING:
     import polars as pl
+    import pyarrow as pa
+    from pyiceberg.partitioning import PartitionSpec
     from pyspark.sql import DataFrame as SparkDataFrame
     from pyspark.sql import SparkSession
 
@@ -54,6 +52,66 @@ def _compute_schema_hash(column_names: list[str], column_types: list[str]) -> st
     pairs = sorted(zip(column_names, column_types, strict=False))
     raw = json.dumps(pairs, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _build_partition_spec(
+    arrow_schema: "pa.Schema",
+    partition_cols: list[str],
+) -> "PartitionSpec":
+    """
+    Build a PyIceberg PartitionSpec with an IdentityTransform for each
+    partition column.
+
+    Bronze tables always partition by _snapshot_date (Identity transform —
+    no bucketing or truncation). Silver/Gold tables may add additional
+    partition columns (e.g. match_type, season) using the same approach.
+
+    Args:
+        arrow_schema:   PyArrow schema of the DataFrame being written.
+                        Must already include all metadata columns
+                        (_snapshot_date etc.) because _inject_meta_polars
+                        runs before this function is called.
+        partition_cols: Ordered list of column names to partition by.
+                        Each column gets an IdentityTransform.
+
+    Returns:
+        PyIceberg PartitionSpec ready to pass to catalog.create_table().
+
+    Raises:
+        ValueError: If any partition column is absent from the schema.
+    """
+    from pyiceberg.io.pyarrow import schema_to_pyiceberg
+    from pyiceberg.partitioning import PartitionField, PartitionSpec
+    from pyiceberg.transforms import IdentityTransform
+
+    # Convert PyArrow schema → PyIceberg Schema to obtain Iceberg field IDs.
+    # PyIceberg assigns sequential field IDs (starting at 1) during this
+    # conversion — we need those IDs to construct PartitionFields correctly.
+    iceberg_schema = schema_to_pyiceberg(arrow_schema)
+
+    partition_fields: list[PartitionField] = []
+    for i, col in enumerate(partition_cols):
+        try:
+            iceberg_field = iceberg_schema.find_field(col)
+        except Exception:
+            iceberg_field = None
+
+        if iceberg_field is None:
+            available = [f.name for f in iceberg_schema.fields]
+            raise ValueError(f"Partition column '{col}' not found in schema. " f"Available columns: {available}")
+
+        partition_fields.append(
+            PartitionField(
+                source_id=iceberg_field.field_id,
+                # Iceberg convention: partition field IDs start at 1000 and
+                # must not collide with data field IDs (which start at 1).
+                field_id=1000 + i,
+                transform=IdentityTransform(),
+                name=col,
+            )
+        )
+
+    return PartitionSpec(*partition_fields)
 
 
 def _inject_meta_polars(
@@ -238,26 +296,41 @@ class PolarsIcebergWriter:
             fqn:             Iceberg table FQN
             snapshot_date:   Logical processing date
             layer:           Layer enum — used to apply default table properties
-            partition_cols:  List of column names to partition by
+            partition_cols:  Columns to partition by (IdentityTransform per col).
+                             For Bronze tables this is always ["_snapshot_date"].
+                             Passed to _build_partition_spec() which converts
+                             column names → PyIceberg PartitionSpec with proper
+                             field IDs.  If None, the table is unpartitioned.
             pipeline_run_id: Optional run UUID
             source_file:     Source file name for metadata
             source_url:      Source URL for metadata
         """
 
         run_id = pipeline_run_id or str(uuid.uuid4())
+
+        # Inject metadata columns BEFORE deriving arrow_schema so that
+        # partition columns like _snapshot_date are already present in
+        # the schema when _build_partition_spec() resolves field IDs.
         df = _inject_meta_polars(df, snapshot_date, run_id, source_file, source_url)
         arrow_schema = df.to_arrow().schema
         catalog = self._catalog
 
         if not self._table_exists(fqn):
-            logger.info("Creating Iceberg table", extra={"table": fqn, "layer": layer})
-            catalog_name, namespace, table_name = TableName.from_fqn(fqn)
+            logger.info(
+                "Creating Iceberg table",
+                extra={
+                    "table": fqn,
+                    "layer": layer,
+                    "partition_cols": partition_cols or [],
+                },
+            )
+            _catalog_name, namespace, _table_name = TableName.from_fqn(fqn)
 
             # Ensure namespace exists
             try:
                 catalog.create_namespace_if_not_exists(namespace)
             except Exception:
-                pass  # namespace may already exist
+                pass  # namespace may already exist — safe to ignore
 
             props = {
                 Layer.BRONZE: IcebergProperties.bronze_defaults(),
@@ -265,12 +338,22 @@ class PolarsIcebergWriter:
                 Layer.GOLD: IcebergProperties.gold_defaults(),
             }.get(layer, {})
 
-            catalog.create_table(
-                identifier=fqn,
-                schema=arrow_schema,
-                properties=props,
-            )
+            # Build PartitionSpec only when partition columns are requested.
+            # _build_partition_spec converts column names → PyIceberg field IDs
+            # using the already-injected arrow_schema so _snapshot_date is
+            # guaranteed to be present and resolvable.
+            create_kwargs: dict = {
+                "identifier": fqn,
+                "schema": arrow_schema,
+                "properties": props,
+            }
+            if partition_cols:
+                create_kwargs["partition_spec"] = _build_partition_spec(arrow_schema, partition_cols)
 
+            catalog.create_table(**create_kwargs)
+
+        # append() calls _inject_meta_polars again, which is safe because
+        # the helper skips columns that are already present.
         return self.append(df, fqn, snapshot_date, run_id, source_file, source_url)
 
     def _table_exists(self, fqn: str) -> bool:

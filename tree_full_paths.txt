@@ -1,281 +1,464 @@
 .
-├── ./apps
-│   ├── ./apps/ai-studio
-│   │   ├── ./apps/ai-studio/evaluation
-│   │   └── ./apps/ai-studio/playground
-│   ├── ./apps/fastapi
-│   │   └── ./apps/fastapi/app -> ../../platform/serving/api
-│   └── ./apps/superset
-│       ├── ./apps/superset/charts
-│       ├── ./apps/superset/dashboards
-│       └── ./apps/superset/datasets
-├── ./conf
-│   ├── ./conf/base
-│   │   ├── ./conf/base/ai.yaml
-│   │   ├── ./conf/base/airflow.yaml
-│   │   ├── ./conf/base/dbt.yaml
-│   │   ├── ./conf/base/duckdb.yaml
-│   │   ├── ./conf/base/mlflow.yaml
-│   │   ├── ./conf/base/paths.yaml
-│   │   ├── ./conf/base/polars.yaml
-│   │   ├── ./conf/base/spark.yaml
-│   │   └── ./conf/base/storage.yaml
-│   ├── ./conf/dev
-│   └── ./conf/prod
-├── ./docker
-├── ./docker-compose.yml
-├── ./docs
-│   ├── ./docs/adr
-│   │   ├── ./docs/adr/0001-use-modular-monolith.md
-│   │   ├── ./docs/adr/0002-use-apache-iceberg.md
-│   │   ├── ./docs/adr/0003-use-airflow-for-orchestration.md
-│   │   ├── ./docs/adr/adr-template.md
-│   │   └── ./docs/adr/README.md
-│   ├── ./docs/architecture
-│   │   ├── ./docs/architecture/data-flow.md
-│   │   ├── ./docs/architecture/data-model.md
-│   │   ├── ./docs/architecture/hld-hla.md
-│   │   ├── ./docs/architecture/repo-structure.md
-│   │   ├── ./docs/architecture/service-interactions.md
-│   │   └── ./docs/architecture/source-warehouse-contracts.md
-│   ├── ./docs/images
-│   │   └── ./docs/images/platform_arch_clean.png
-│   ├── ./docs/product
-│   │   ├── ./docs/product/roadmap.md
-│   │   ├── ./docs/product/scope-v1.md
-│   │   └── ./docs/product/vision.md
-│   └── ./docs/runbooks
-│       ├── ./docs/runbooks/backfill-cricsheet.md
-│       ├── ./docs/runbooks/local-bootstrap.md
-│       ├── ./docs/runbooks/recover-failed-dag.md
-│       └── ./docs/runbooks/refresh-ai-metadata.md
-├── ./infra
-│   ├── ./infra/bootstrap
-│   │   ├── ./infra/bootstrap/create-buckets.sh
-│   │   ├── ./infra/bootstrap/init-duckdb.sql
-│   │   └── ./infra/bootstrap/init-metastore.sql
-│   ├── ./infra/compose
-│   │   ├── ./infra/compose/compose.base.yml
-│   │   ├── ./infra/compose/compose.dev.yml
-│   │   └── ./infra/compose/compose.observability.yml
-│   ├── ./infra/docker
-│   │   ├── ./infra/docker/airflow
-│   │   ├── ./infra/docker/api
-│   │   ├── ./infra/docker/spark
-│   │   └── ./infra/docker/superset
-│   └── ./infra/iceberg
-│       ├── ./infra/iceberg/catalog
-│       └── ./infra/iceberg/table-properties
-├── ./ipl_csv2.zip
-├── ./ipl_data_prep.ipynb
-├── ./ipl_data.zip
-├── ./Makefile
-├── ./models
-│   └── ./models/dbt
-│       ├── ./models/dbt/analyses
-│       ├── ./models/dbt/dbt_project.yml
-│       ├── ./models/dbt/docs
-│       ├── ./models/dbt/macros
-│       ├── ./models/dbt/models
-│       │   ├── ./models/dbt/models/intermediate
-│       │   ├── ./models/dbt/models/marts
-│       │   │   ├── ./models/dbt/models/marts/analytics
-│       │   │   ├── ./models/dbt/models/marts/dimensions
-│       │   │   └── ./models/dbt/models/marts/facts
-│       │   ├── ./models/dbt/models/semantic
-│       │   └── ./models/dbt/models/staging
-│       │       ├── ./models/dbt/models/staging/serving
-│       │       └── ./models/dbt/models/staging/silver
-│       ├── ./models/dbt/profiles
-│       ├── ./models/dbt/seeds
-│       ├── ./models/dbt/snapshots
-│       └── ./models/dbt/tests
-├── ./notebooks
-│   ├── ./notebooks/exploration
-│   ├── ./notebooks/ml
-│   └── ./notebooks/validation
-├── ./observability
-│   ├── ./observability/alerts
-│   ├── ./observability/grafana
-│   │   ├── ./observability/grafana/dashboards
-│   │   └── ./observability/grafana/datasources
-│   └── ./observability/prometheus
-├── ./orchestration
-│   └── ./orchestration/airflow
-│       ├── ./orchestration/airflow/dags
-│       │   ├── ./orchestration/airflow/dags/dag_build_silver_entities.py
-│       │   ├── ./orchestration/airflow/dags/dag_ingest_cricsheet_archives.py
-│       │   ├── ./orchestration/airflow/dags/dag_ingest_cricsheet_register.py
-│       │   ├── ./orchestration/airflow/dags/dag_parse_bronze_match_documents.py
-│       │   ├── ./orchestration/airflow/dags/dag_refresh_ai_metadata.py
-│       │   ├── ./orchestration/airflow/dags/dag_refresh_serving_layer.py
-│       │   ├── ./orchestration/airflow/dags/dag_run_gold_dbt_models.py
-│       │   ├── ./orchestration/airflow/dags/dag_run_quality_checks.py
-│       │   └── ./orchestration/airflow/dags/dag_train_ml_model.py
-│       ├── ./orchestration/airflow/include
-│       │   ├── ./orchestration/airflow/include/sql
-│       │   └── ./orchestration/airflow/include/templates
-│       └── ./orchestration/airflow/plugins
-│           ├── ./orchestration/airflow/plugins/hooks
-│           ├── ./orchestration/airflow/plugins/operators
-│           └── ./orchestration/airflow/plugins/sensors
-├── ./platform
-│   ├── ./platform/__init__.py
-│   ├── ./platform/__pycache__
-│   │   └── ./platform/__pycache__/__init__.cpython-313.pyc
-│   ├── ./platform/common
-│   │   ├── ./platform/common/__init__.py
-│   │   ├── ./platform/common/contracts
-│   │   │   ├── ./platform/common/contracts/__init__.py
-│   │   │   ├── ./platform/common/contracts/enums
-│   │   │   │   └── ./platform/common/contracts/enums/__init__.py
-│   │   │   ├── ./platform/common/contracts/enums.py
-│   │   │   ├── ./platform/common/contracts/naming
-│   │   │   │   └── ./platform/common/contracts/naming/__init__.py
-│   │   │   ├── ./platform/common/contracts/naming.py
-│   │   │   └── ./platform/common/contracts/schemas
-│   │   │       └── ./platform/common/contracts/schemas/__init__.py
-│   │   ├── ./platform/common/exceptions.py
-│   │   ├── ./platform/common/logging.py
-│   │   ├── ./platform/common/settings.py
-│   │   └── ./platform/common/telemetry.py
-│   ├── ./platform/ingestion
-│   │   ├── ./platform/ingestion/__init__.py
-│   │   ├── ./platform/ingestion/__pycache__
-│   │   │   └── ./platform/ingestion/__pycache__/__init__.cpython-313.pyc
-│   │   ├── ./platform/ingestion/cricsheet
-│   │   │   ├── ./platform/ingestion/cricsheet/__init__.py
-│   │   │   ├── ./platform/ingestion/cricsheet/checksum.py
-│   │   │   ├── ./platform/ingestion/cricsheet/download.py
-│   │   │   ├── ./platform/ingestion/cricsheet/extract.py
-│   │   │   └── ./platform/ingestion/cricsheet/manifest.py
-│   │   ├── ./platform/ingestion/io
-│   │   │   ├── ./platform/ingestion/io/__init__.py
-│   │   │   ├── ./platform/ingestion/io/filesystem.py
-│   │   │   └── ./platform/ingestion/io/minio.py
-│   │   ├── ./platform/ingestion/jobs
-│   │   │   ├── ./platform/ingestion/jobs/__init__.py
-│   │   │   ├── ./platform/ingestion/jobs/ingest_cricsheet_archives.py
-│   │   │   └── ./platform/ingestion/jobs/ingest_cricsheet_register.py
-│   │   └── ./platform/ingestion/register
-│   │       ├── ./platform/ingestion/register/__init__.py
-│   │       ├── ./platform/ingestion/register/__pycache__
-│   │       │   ├── ./platform/ingestion/register/__pycache__/__init__.cpython-313.pyc
-│   │       │   └── ./platform/ingestion/register/__pycache__/download.cpython-313.pyc
-│   │       ├── ./platform/ingestion/register/download.py
-│   │       ├── ./platform/ingestion/register/normalize.py
-│   │       └── ./platform/ingestion/register/parse.py
-│   ├── ./platform/ml
-│   │   ├── ./platform/ml/__init__.py
-│   │   ├── ./platform/ml/features
-│   │   │   └── ./platform/ml/features/__init__.py
-│   │   ├── ./platform/ml/scoring
-│   │   │   └── ./platform/ml/scoring/__init__.py
-│   │   ├── ./platform/ml/tracking
-│   │   │   └── ./platform/ml/tracking/__init__.py
-│   │   └── ./platform/ml/training
-│   │       └── ./platform/ml/training/__init__.py
-│   ├── ./platform/quality
-│   │   ├── ./platform/quality/__init__.py
-│   │   ├── ./platform/quality/checks
-│   │   │   └── ./platform/quality/checks/__init__.py
-│   │   ├── ./platform/quality/metrics
-│   │   │   └── ./platform/quality/metrics/__init__.py
-│   │   ├── ./platform/quality/reconciliation
-│   │   │   └── ./platform/quality/reconciliation/__init__.py
-│   │   └── ./platform/quality/reports
-│   │       └── ./platform/quality/reports/__init__.py
-│   ├── ./platform/serving
-│   │   ├── ./platform/serving/__init__.py
-│   │   ├── ./platform/serving/ai
-│   │   │   ├── ./platform/serving/ai/__init__.py
-│   │   │   ├── ./platform/serving/ai/chains
-│   │   │   │   └── ./platform/serving/ai/chains/__init__.py
-│   │   │   ├── ./platform/serving/ai/jobs
-│   │   │   │   └── ./platform/serving/ai/jobs/__init__.py
-│   │   │   ├── ./platform/serving/ai/prompt_registry
-│   │   │   │   └── ./platform/serving/ai/prompt_registry/__init__.py
-│   │   │   ├── ./platform/serving/ai/retrieval
-│   │   │   │   └── ./platform/serving/ai/retrieval/__init__.py
-│   │   │   ├── ./platform/serving/ai/semantic_layer
-│   │   │   │   └── ./platform/serving/ai/semantic_layer/__init__.py
-│   │   │   └── ./platform/serving/ai/sql_guardrails
-│   │   │       └── ./platform/serving/ai/sql_guardrails/__init__.py
-│   │   ├── ./platform/serving/api
-│   │   │   ├── ./platform/serving/api/__init__.py
-│   │   │   ├── ./platform/serving/api/dependencies
-│   │   │   │   └── ./platform/serving/api/dependencies/__init__.py
-│   │   │   ├── ./platform/serving/api/dependencies.py
-│   │   │   ├── ./platform/serving/api/main.py
-│   │   │   ├── ./platform/serving/api/routers
-│   │   │   │   └── ./platform/serving/api/routers/__init__.py
-│   │   │   └── ./platform/serving/api/services
-│   │   │       └── ./platform/serving/api/services/__init__.py
-│   │   └── ./platform/serving/duckdb
-│   │       ├── ./platform/serving/duckdb/__init__.py
-│   │       ├── ./platform/serving/duckdb/init.sql
-│   │       ├── ./platform/serving/duckdb/refresh.py
-│   │       └── ./platform/serving/duckdb/views.sql
-│   └── ./platform/transform
-│       ├── ./platform/transform/__init__.py
-│       ├── ./platform/transform/polars
-│       │   ├── ./platform/transform/polars/__init__.py
-│       │   ├── ./platform/transform/polars/bronze
-│       │   │   ├── ./platform/transform/polars/bronze/__init__.py
-│       │   │   ├── ./platform/transform/polars/bronze/match_documents.py
-│       │   │   └── ./platform/transform/polars/bronze/register_people.py
-│       │   ├── ./platform/transform/polars/jobs
-│       │   │   └── ./platform/transform/polars/jobs/__init__.py
-│       │   └── ./platform/transform/polars/quality
-│       │       └── ./platform/transform/polars/quality/__init__.py
-│       ├── ./platform/transform/shared
-│       │   ├── ./platform/transform/shared/__init__.py
-│       │   ├── ./platform/transform/shared/iceberg.py
-│       │   ├── ./platform/transform/shared/partitioning.py
-│       │   ├── ./platform/transform/shared/readers.py
-│       │   └── ./platform/transform/shared/writers.py
-│       └── ./platform/transform/spark
-│           ├── ./platform/transform/spark/__init__.py
-│           ├── ./platform/transform/spark/gold_prep
-│           │   └── ./platform/transform/spark/gold_prep/__init__.py
-│           ├── ./platform/transform/spark/jobs
-│           │   └── ./platform/transform/spark/jobs/__init__.py
-│           ├── ./platform/transform/spark/quality
-│           │   └── ./platform/transform/spark/quality/__init__.py
-│           └── ./platform/transform/spark/silver
-│               ├── ./platform/transform/spark/silver/__init__.py
-│               ├── ./platform/transform/spark/silver/deliveries.py
-│               ├── ./platform/transform/spark/silver/innings.py
-│               ├── ./platform/transform/spark/silver/matches.py
-│               ├── ./platform/transform/spark/silver/officials.py
-│               └── ./platform/transform/spark/silver/persons.py
-├── ./poetry.lock
-├── ./pyproject.toml
-├── ./README.md
-├── ./requirements.txt
-├── ./storage
-│   ├── ./storage/artifacts
-│   ├── ./storage/duckdb
-│   └── ./storage/external
-├── ./tests
-│   ├── ./tests/__init__.py
-│   ├── ./tests/__pycache__
-│   │   ├── ./tests/__pycache__/__init__.cpython-313.pyc
-│   │   ├── ./tests/__pycache__/__init__.cpython-314.pyc
-│   │   └── ./tests/__pycache__/test_smoke.cpython-313-pytest-8.4.2.pyc
-│   ├── ./tests/contract
-│   ├── ./tests/data_quality
-│   ├── ./tests/fixtures
-│   ├── ./tests/integration
-│   ├── ./tests/test_smoke.py
-│   └── ./tests/unit
-│       ├── ./tests/unit/__init__.py
-│       ├── ./tests/unit/__pycache__
-│       │   ├── ./tests/unit/__pycache__/__init__.cpython-313.pyc
-│       │   ├── ./tests/unit/__pycache__/__init__.cpython-314.pyc
-│       │   ├── ./tests/unit/__pycache__/test_example.cpython-313-pytest-8.4.2.pyc
-│       │   └── ./tests/unit/__pycache__/test_example.cpython-314-pytest-9.0.3.pyc
-│       └── ./tests/unit/test_example.py
-└── ./tree_full_paths.txt
+├── apps
+│   ├── ai-studio
+│   │   ├── evaluation
+│   │   └── playground
+│   ├── fastapi
+│   │   └── app -> ../../platform/serving/api
+│   └── superset
+│       ├── charts
+│       ├── dashboards
+│       └── datasets
+├── conf
+│   ├── base
+│   │   ├── ai.yaml
+│   │   ├── airflow.yaml
+│   │   ├── dbt.yaml
+│   │   ├── duckdb.yaml
+│   │   ├── mlflow.yaml
+│   │   ├── paths.yaml
+│   │   ├── polars.yaml
+│   │   ├── spark.yaml
+│   │   └── storage.yaml
+│   ├── dev
+│   └── prod
+├── docker
+├── docker-compose.yml
+├── docs
+│   ├── adr
+│   │   ├── 0001-use-modular-monolith.md
+│   │   ├── 0002-use-apache-iceberg.md
+│   │   ├── 0003-use-airflow-for-orchestration.md
+│   │   ├── adr-template.md
+│   │   └── README.md
+│   ├── architecture
+│   │   ├── data-flow.md
+│   │   ├── data-model.md
+│   │   ├── hld-hla.md
+│   │   ├── repo-structure.md
+│   │   ├── service-interactions.md
+│   │   └── source-warehouse-contracts.md
+│   ├── images
+│   │   └── platform_arch_clean.png
+│   ├── product
+│   │   ├── roadmap.md
+│   │   ├── scope-v1.md
+│   │   └── vision.md
+│   └── runbooks
+│       ├── backfill-cricsheet.md
+│       ├── local-bootstrap.md
+│       ├── recover-failed-dag.md
+│       └── refresh-ai-metadata.md
+├── graphify-out
+│   ├── cache
+│   │   └── ast
+│   │       ├── 02c528eb295a989b8741c17a9b7105985f9a9417028e173285224e047c5a4372.json
+│   │       ├── 031aeeaed94451ce2c04cd2067745c739dc27c0e5b76f4cf804c78265ee00402.json
+│   │       ├── 0448f862f44c8454556a95fbac98ad3d64412558923e8d3f40d11395f4d0816e.json
+│   │       ├── 0543297f150fb32c1044693db87dda7dc581192342521c8056c780cb42832587.json
+│   │       ├── 05877b3e844acee5b15996f18c6dd505a528c3bb1761d9d053cdaff0e0d9411b.json
+│   │       ├── 08c6edad27f15d762867707dcf6c67d73d473b5591bbf035cb62b4894a6ad934.json
+│   │       ├── 0b30385f0f873d17852db0dcdea69918d63a610f47e68ca5b1a9343a11a3899d.json
+│   │       ├── 0e0cd108e348098686b6c973bc6ba7684e349687fb2d78de7b4d1f85f8ffe56b.json
+│   │       ├── 10a532112a0d72de8db2ef948d26a07b039278002523c40662200b95de2e9f0e.json
+│   │       ├── 111a5518f98efbb48216003547a29dced4b6cb1dee9af5d604ccf7c7dd0be6da.json
+│   │       ├── 16d98c7e920588114d45cc2083fb33c5272792e8f4c975e47a9c46be838bfe4e.json
+│   │       ├── 19640b61cd38d0c35c07e24bffec1ccf3f16a837eccf0951bd525f6b6b4d1583.json
+│   │       ├── 19b9e7503e33b91f09ad3df84991f269539dd0afe7820443ba0421ebc275b1af.json
+│   │       ├── 1ac270ea822a1c43013d66b2109301dcee7e7c0ae6267a1d8a409f3103e6d365.json
+│   │       ├── 1ad89b4ac35c5b97c4d43ebbf183a939b282cf5df4923356ade3446c28ee3d9c.json
+│   │       ├── 1b69fc44480e6c74d9655b94a649c402aaa3ad41cfc13bbed3b4c6ccd7762ce3.json
+│   │       ├── 1b891fd88d46120185b64ed441f65488a0d96f9696efd2426aeab8709a0d0f1e.json
+│   │       ├── 1bae5b00c1b4677f3d70116c4f1b28f52e8f8f0a660bb17fce4849b87fa96485.json
+│   │       ├── 1c9d749a016851f59aca946acf5b357401e8bea2f2a9edeb84468a86a9f675cc.json
+│   │       ├── 20a7da7b4fa37a24ec916184ee3fe3651a9e763e39af5574f0f52d17a76bb6e9.json
+│   │       ├── 20d4271131430b04d2dacb2f588df482135a77c0e452c0226a92c985c1300624.json
+│   │       ├── 220f0c4fba109b6f01e383b09d0249cd8b73d6fc34e5328f507438cbded9a2d3.json
+│   │       ├── 23f67a50e147f3bc64a40328e903c532426606e73e46875dc8035fd0fc0a9a97.json
+│   │       ├── 243bcf3a3e94d388ebce7526af6857f5ae72fc410977eee8ab45e9a86a162297.json
+│   │       ├── 26b8cd516f8e1c1e1dd590b4347c2727cc0bb9ebb0c8ec7d6aca441b55ac9221.json
+│   │       ├── 28b257e209cce65316cc20f61e4ea9ef4b20c35784fd08468bdc0a62d21563e1.json
+│   │       ├── 29a61bea4958497ae8bd1188b5c0649198bceedc1a9a1dda11836fb9fb5c5acb.json
+│   │       ├── 29ae9b6ab212a0be250cde3d0534d2daf15617e920f4e1784cc0a110fa8968b3.json
+│   │       ├── 2b41874c1ec869f222d6950366e076bafd13239e5cd6e12fef8634e107ca28c1.json
+│   │       ├── 3052b65e7accc6f101f6c66c73344d1d612af607c0bc222427ddcf7331b6eb25.json
+│   │       ├── 30d24805de12208c4886d4b1894c75013a2bdbae3c3711e3ba43e929543af1d0.json
+│   │       ├── 3224f15825a46d7e0f92b3f7526e05bfa359482dd13b7674231fcfd7e5cf0ee7.json
+│   │       ├── 330c52a1ad3a6b8555767c7fe7e141206c876ca3874ea57bb89f82236c74cc2e.json
+│   │       ├── 3338b0a3aedc582ea232d579f884f26b83cf638b638d1f1ba5ef94fa57ad3da5.json
+│   │       ├── 34fa489eba5c8084aeaf5ac1003db567c6da9d9c61c9516f02e16c63e88de835.json
+│   │       ├── 35712cace4554a3f79c8d354a3c332e0fc34b1774e87459809c72c0222fc4120.json
+│   │       ├── 3cdb3cade81037a622b0250300961b997924e875d1f7d47919bc21b65ee31739.json
+│   │       ├── 3dc3fb951ae516759c7ad5a20b0e1296c0088e80433f4a226548dc7eafefa37d.json
+│   │       ├── 446fecefaa464793346d5ba17a8351833e072eff74de3c0c1ca0022083de373f.json
+│   │       ├── 4477d8954243a9db5657a23e05383bb1c9c16e639a9dda8bb6414f1a9f1aea72.json
+│   │       ├── 4999e14fdb90cd6df4ed91a823f9f2e0d5e1e21937f88320d29caffd78d2e92f.json
+│   │       ├── 4ac85715620150d0980dac9fb75964bfec68aa1e1aa5b56e077f97f5ee2b0ca4.json
+│   │       ├── 4b63f78192114cbfd3ace9241e04e166bfe6d02a62e25225dc7eb4d2c9372aee.json
+│   │       ├── 4be9ef096cae6e2456f80ef08c2dd8404712a88b530d6acbd107ef86800a5b2d.json
+│   │       ├── 4e0899e3a6eb1319c82830a28f08570dd57017ae6bca485d74ea772f42e7cd6f.json
+│   │       ├── 4f2befb36b4d137b1dfa2afb3ea1419000fd27f067afe251a17b39745043159d.json
+│   │       ├── 52ad66ce7de0db5eb3cd04aeadd48a909be80b2d5a63875e0c87cd6ba67dd3d3.json
+│   │       ├── 530ed939c135293eba06cd5472781f61e75571ea38816cf06f5acc221e0336ac.json
+│   │       ├── 54ff0eeb0cb86f297fa6d7c0e7c76b8ca0764450b72c7583604b75964c4e83d2.json
+│   │       ├── 55ff8c36af8c9a2131b3b8bb998267e161081323a8b8cd285df2339ccce036d4.json
+│   │       ├── 572a180e126a22ad4a70eb885563d385c9989c7531c11d6ddc55afe3a828976e.json
+│   │       ├── 593e9fc78e00721b6cd383d44bb9ca5491b9d27c93190021596fa639b032caf2.json
+│   │       ├── 59ba150510d5c90c4902c36f1b07a4240e1f14b3bf750be32cb25520c6b73ebe.json
+│   │       ├── 5a3dcf19d352766625e718d299179ab37aa6c6fc07b2a9d80f34ff0956068909.json
+│   │       ├── 5dcc1e7a45b28787d3e2a0a7b4d00f97cb9f6cac04e5dca402a90db92884d1ca.json
+│   │       ├── 5f4d982648bf6a9651645dad2592fd0d924e901ee47f36cf0746a54e7a60ecc3.json
+│   │       ├── 624c581eb4af3ce5d792030e3c036e2481f50edf809e2f2205ec8135bb6be2a9.json
+│   │       ├── 65172a0b351c77f79c376d4a9bf0e20eced81b17c7a7e70b6279531dbb2b0d90.json
+│   │       ├── 6542bfdd76263f155c02bc83cd06a2ddf145f3dccf2d6df11513ad9acfd75bf0.json
+│   │       ├── 68fb6b754c1e43478b6741e670a49b8438f423296eb1daa2bf9d5b5b18c17c12.json
+│   │       ├── 6aafd2beb5fbc9a4efbc80f0fba45a4eb62c47e8cf7578dceb8308631034c4f8.json
+│   │       ├── 6cad7742ae375f54744a5d8148ca66c20501f3977606774c85479795fa9988c5.json
+│   │       ├── 6cfc9dd49eced9d74f3e7e83a496a611f5691ef98b1798039f1056a9b7fbe413.json
+│   │       ├── 6dc78b23a4d3e1b60c853f74ec4277494758b2027b155dd430ffdfe78ea0b73e.json
+│   │       ├── 72119bdec7f40d21781ea7ad2dd9c1a0fc6acc81f5595b4f20b5a10b04acc3a0.json
+│   │       ├── 732fa3624c667bd3c63807ec485403b81bdb49bdb41ae5af3ef67de90f167aee.json
+│   │       ├── 738becf12ccf67f5d879b6610ff3dfc87168252cd15de0fbc961fa2cbd1a46d2.json
+│   │       ├── 7479a45ceb0dfc75de00a06e4e61e3cf9d3832db9fc3e0af8f06f94894136c02.json
+│   │       ├── 765aad7265fe7191ecc57b56847e181e6f632f72f29ee091b98b20901a23e9c4.json
+│   │       ├── 774c38f9a2336774ba4fd93401eb3a6a1f7b8774937ca5acc9f3dce18e5c6190.json
+│   │       ├── 781585b2fb24526aa2b790dc81b96de132e2a83efab7cdc370a9f0b188b1ff95.json
+│   │       ├── 7a01ee138a47475edb6669753e8deed119c79dbfd1b08fed672d12863425fb2d.json
+│   │       ├── 7f64bd09fead697f42321e9ecf82093628efeb4d1427c90c701a17704e678652.json
+│   │       ├── 811911a5d82c4eda0f72e7773d76da046f0960b9d46a83e364e7bbe5ed0ec729.json
+│   │       ├── 8a1a03c5d196886cf49664ce318475515e0da70b11d460aef889b8d19efb8189.json
+│   │       ├── 8d400bbfade096d3d481ffff9cf648c790f1a2ea2ec6270049c5cf2a00b81085.json
+│   │       ├── 94d9ae2ee30ba54a96f360c4fd10e15d9d32c2eb3fbb47debbac2e2d22c58baf.json
+│   │       ├── 965e4d78d46383861e0e571127a8a75fc37e17a2f751e0501e4588f24d5b1b45.json
+│   │       ├── 974d5a760fbf167e71b5f4d5d846f0fa033614621925d3d4d3f3abd2b8131823.json
+│   │       ├── 9c0831e86da676255e8c1485abe8a825384f9646d25556a251e156808d430e45.json
+│   │       ├── 9cb1240986c79a2549b41604ddf8d6a469c9e5c754d16507c0c0149e65e4f267.json
+│   │       ├── 9cb642bd34e1fdd49d055fa48e24396cf13f7fa5019b513b2ab2d409a30c4aee.json
+│   │       ├── 9df6fc6b1db185c59ad28e7febfaca8843f46980249200b5670b566ef34c42f3.json
+│   │       ├── a7e30b4dfdf3241b2c26dfb4b68d9ac5b9e5942928078d6f2e37c9fe2586167d.json
+│   │       ├── abf039be753f27d5f3908be115f1fde3c018da63e93dabc3a93b72b513f043bf.json
+│   │       ├── b00ee93ed944b47d6f3e082feb4d0f3a38bacbdfd57e0f9d8fb05fcec42b8124.json
+│   │       ├── b121ddfb09f90be53b9eef4dbe5193a0a08e4d7964bd6ab8cdbf6c1580dcdc45.json
+│   │       ├── b3c7982456590ad409e7c0d7a2901fce2f2c917ffd1ff480d563eb68b83ad5da.json
+│   │       ├── b3c885ac67737026972093ff0e194d56863a847be97ec554212d4b6ed3cad39e.json
+│   │       ├── bba38c9b0dd71039960f220c9e8597f2add9d6fb4001a10d5f5f13e6a7cfad7e.json
+│   │       ├── bc484d80c74b70154b4ed26130efd44f3008936d1d6b35b6f6653a7f3bb88219.json
+│   │       ├── c28e1780f771896c4626b965e44aec1c7381f9758a52251af4f4752121f2a9a3.json
+│   │       ├── c3ea0ec20dec47e2525929e5e15dc8cfa537fa7d639fae088029ecac362d14c1.json
+│   │       ├── c55a54f64ede4fbbae9416084d420728e740e51641081d6c218b6947cd230d7b.json
+│   │       ├── c59f521f265311e0566dc9294762898c654c1508bb584781d87255d2ce6ddd3c.json
+│   │       ├── c750f90f89319b5b81673bcc26de454f6a02a666225deda9ed9d02af6b418980.json
+│   │       ├── ca53a94c5726cdc8e2f9019d3a61341e83b746080372d1f3997662a34c394c0a.json
+│   │       ├── d00ace9fc42750bd62d60b1109d30cb8f205d0228af0af1885cda4699de15ac9.json
+│   │       ├── d2661548ba0736fac1ad90e551cf9b5ca1dc421f6c7d0607c09c5eb672778f37.json
+│   │       ├── d43480df7ed43f8f7c745ab75674c571cf6ebd6943ead885b81b0f84538c12bc.json
+│   │       ├── d6de34705d3bb565b3ab9bd6a5e30b0199ff7c8121e8b9f3a9cfb200c22991e2.json
+│   │       ├── d75f004b984ae5aed439c4c3d886fecd2a255b9197449c6fedd5840b6a054231.json
+│   │       ├── d86e9e2117271a3efba296f61540dcd491f30b17e51c52cd37a8ccc883f8534e.json
+│   │       ├── d9d4583b529b0e87b384aa3bd9064ecb9370fe13d4a4d6901566f9bae5ba33e8.json
+│   │       ├── da2afa5462b77e806a837020859c3548a02f396c1336df42b760418cd8b0768c.json
+│   │       ├── db338c4e10bd23cde45254245fbc1893170c9bdac1912646c709ce5e1f3f5eda.json
+│   │       ├── dd52c7c26b0a52d6de20783c0aa7db49152d6b8f8205c0224d78772e2d6af435.json
+│   │       ├── ee05e1cbdf7b1f5fcd39e808f9138cb13a5a407ddd168dc7e0a19aeb3865b240.json
+│   │       ├── f21496ec4e8a6b65653480691e10d255be9ce45d885f0d1588e1e61e4d457572.json
+│   │       ├── f2ad533177943880d6aa5d0beb96c6e65eb9c912b3f9c9e80a8be05d3bcef430.json
+│   │       ├── f3101618cec77c3b6c0347be3b49720a5dfad8fd98bbfe8042322b5ead7ef299.json
+│   │       ├── f39aa3f2565bb2e2d182fe9ff4ec616aa078da286174ed47a130a0a785ef1a96.json
+│   │       ├── f769e95ff4481f935ec96ab9979fb48916dfe2e7b510d2a903a1fc7032a3000f.json
+│   │       ├── f79bcbd1de6da37b64a09c511bb2c5de7dcd330f045210b0ebae1610d99d1680.json
+│   │       ├── f929679305b155f1e3aafcf75aae7d0739cfaeb20fe65bc912265d2a69eaf1e8.json
+│   │       ├── f988167f79eaff6f97cb5a4dec36271512b888a66040c35851f1acccaa08d02c.json
+│   │       ├── fe16120747cd90374a2769c4bb2761b8209dee6e57fc918999128a8be1e19f19.json
+│   │       ├── feacc03763d9bf2fa8f13933888c359d4b4a8496bc77992c28da01737f48b2c0.json
+│   │       └── ff53a043861af89a9d429afd386cbc1b46d3b7e9679d01d3fa3b01403d92ce78.json
+│   ├── GRAPH_REPORT.md
+│   ├── graph.html
+│   ├── graph.json
+│   └── manifest.json
+├── infra
+│   ├── bootstrap
+│   │   ├── create-buckets.sh
+│   │   ├── init-duckdb.sql
+│   │   └── init-metastore.sql
+│   ├── compose
+│   │   ├── compose.base.yml
+│   │   ├── compose.dev.yml
+│   │   └── compose.observability.yml
+│   ├── docker
+│   │   ├── airflow
+│   │   ├── api
+│   │   ├── spark
+│   │   └── superset
+│   ├── iceberg
+│   │   ├── catalog
+│   │   └── table-properties
+│   └── pgadmin
+│       └── servers.json
+├── ipl_csv2.zip
+├── ipl_data_prep.ipynb
+├── ipl_data.zip
+├── Makefile
+├── models
+│   └── dbt
+│       ├── analyses
+│       ├── dbt_project.yml
+│       ├── docs
+│       ├── macros
+│       ├── models
+│       │   ├── intermediate
+│       │   ├── marts
+│       │   │   ├── analytics
+│       │   │   ├── dimensions
+│       │   │   └── facts
+│       │   ├── semantic
+│       │   └── staging
+│       │       ├── serving
+│       │       └── silver
+│       ├── profiles
+│       ├── seeds
+│       ├── snapshots
+│       └── tests
+├── notebooks
+│   ├── exploration
+│   ├── ml
+│   └── validation
+├── observability
+│   ├── alerts
+│   ├── grafana
+│   │   ├── dashboards
+│   │   └── datasources
+│   └── prometheus
+├── orchestration
+│   └── airflow
+│       ├── dags
+│       │   ├── __pycache__
+│       │   │   └── dag_ingest_cricsheet_register.cpython-311.pyc
+│       │   ├── dag_build_silver_entities.py
+│       │   ├── dag_ingest_cricsheet_archives.py
+│       │   ├── dag_ingest_cricsheet_register.py
+│       │   ├── dag_parse_bronze_match_documents.py
+│       │   ├── dag_refresh_ai_metadata.py
+│       │   ├── dag_refresh_serving_layer.py
+│       │   ├── dag_run_gold_dbt_models.py
+│       │   ├── dag_run_quality_checks.py
+│       │   └── dag_train_ml_model.py
+│       ├── include
+│       │   ├── sql
+│       │   └── templates
+│       └── plugins
+│           ├── hooks
+│           ├── operators
+│           └── sensors
+├── poetry.lock
+├── pyproject.toml
+├── README.md
+├── requirements.txt
+├── src
+│   └── cip
+│       ├── __init__.py
+│       ├── __pycache__
+│       │   ├── __init__.cpython-311.pyc
+│       │   └── __init__.cpython-313.pyc
+│       ├── common
+│       │   ├── __init__.py
+│       │   ├── __pycache__
+│       │   │   ├── __init__.cpython-313.pyc
+│       │   │   ├── exceptions.cpython-313.pyc
+│       │   │   ├── logging.cpython-313.pyc
+│       │   │   └── settings.cpython-313.pyc
+│       │   ├── contracts
+│       │   │   ├── __init__.py
+│       │   │   ├── __pycache__
+│       │   │   │   ├── __init__.cpython-313.pyc
+│       │   │   │   ├── enums.cpython-313.pyc
+│       │   │   │   └── naming.cpython-313.pyc
+│       │   │   ├── enums.py
+│       │   │   └── naming.py
+│       │   ├── exceptions.py
+│       │   ├── logging.py
+│       │   ├── settings.py
+│       │   └── telemetry.py
+│       ├── ingestion
+│       │   ├── __init__.py
+│       │   ├── __pycache__
+│       │   │   ├── __init__.cpython-311.pyc
+│       │   │   └── __init__.cpython-313.pyc
+│       │   ├── cricsheet
+│       │   │   ├── __init__.py
+│       │   │   ├── checksum.py
+│       │   │   ├── download.py
+│       │   │   ├── extract.py
+│       │   │   └── manifest.py
+│       │   ├── io
+│       │   │   ├── __init__.py
+│       │   │   ├── __pycache__
+│       │   │   │   ├── __init__.cpython-313.pyc
+│       │   │   │   └── minio.cpython-313.pyc
+│       │   │   ├── filesystem.py
+│       │   │   └── minio.py
+│       │   ├── jobs
+│       │   │   ├── __init__.py
+│       │   │   ├── __pycache__
+│       │   │   │   └── __init__.cpython-311.pyc
+│       │   │   ├── ingest_cricsheet_archives.py
+│       │   │   └── ingest_cricsheet_register.py
+│       │   └── register
+│       │       ├── __init__.py
+│       │       ├── __pycache__
+│       │       │   ├── __init__.cpython-313.pyc
+│       │       │   ├── normalize.cpython-313.pyc
+│       │       │   └── parse.cpython-313.pyc
+│       │       ├── download.py
+│       │       ├── normalize.py
+│       │       └── parse.py
+│       ├── ml
+│       │   ├── __init__.py
+│       │   ├── features
+│       │   │   └── __init__.py
+│       │   ├── scoring
+│       │   │   └── __init__.py
+│       │   ├── tracking
+│       │   │   └── __init__.py
+│       │   └── training
+│       │       └── __init__.py
+│       ├── quality
+│       │   ├── __init__.py
+│       │   ├── checks
+│       │   │   └── __init__.py
+│       │   ├── metrics
+│       │   │   └── __init__.py
+│       │   ├── reconciliation
+│       │   │   └── __init__.py
+│       │   └── reports
+│       │       └── __init__.py
+│       ├── serving
+│       │   ├── __init__.py
+│       │   ├── ai
+│       │   │   ├── __init__.py
+│       │   │   ├── chains
+│       │   │   │   └── __init__.py
+│       │   │   ├── jobs
+│       │   │   │   └── __init__.py
+│       │   │   ├── prompt_registry
+│       │   │   │   └── __init__.py
+│       │   │   ├── retrieval
+│       │   │   │   └── __init__.py
+│       │   │   ├── semantic_layer
+│       │   │   │   └── __init__.py
+│       │   │   └── sql_guardrails
+│       │   │       └── __init__.py
+│       │   ├── api
+│       │   │   ├── __init__.py
+│       │   │   ├── dependencies
+│       │   │   │   └── __init__.py
+│       │   │   ├── dependencies.py
+│       │   │   ├── main.py
+│       │   │   ├── routers
+│       │   │   │   └── __init__.py
+│       │   │   └── services
+│       │   │       └── __init__.py
+│       │   └── duckdb
+│       │       ├── __init__.py
+│       │       ├── init.sql
+│       │       ├── refresh.py
+│       │       └── views.sql
+│       └── transform
+│           ├── __init__.py
+│           ├── __pycache__
+│           │   └── __init__.cpython-313.pyc
+│           ├── polars
+│           │   ├── __init__.py
+│           │   ├── __pycache__
+│           │   │   └── __init__.cpython-313.pyc
+│           │   ├── bronze
+│           │   │   ├── __init__.py
+│           │   │   ├── __pycache__
+│           │   │   │   ├── __init__.cpython-313.pyc
+│           │   │   │   └── register_loader.cpython-313.pyc
+│           │   │   ├── match_documents.py
+│           │   │   ├── register_loader.py
+│           │   │   └── register_people.py
+│           │   ├── jobs
+│           │   │   └── __init__.py
+│           │   └── quality
+│           │       └── __init__.py
+│           ├── shared
+│           │   ├── __init__.py
+│           │   ├── __pycache__
+│           │   │   ├── __init__.cpython-313.pyc
+│           │   │   └── writers.cpython-313.pyc
+│           │   ├── iceberg.py
+│           │   ├── partitioning.py
+│           │   ├── readers.py
+│           │   └── writers.py
+│           └── spark
+│               ├── __init__.py
+│               ├── gold_prep
+│               │   └── __init__.py
+│               ├── jobs
+│               │   └── __init__.py
+│               ├── quality
+│               │   └── __init__.py
+│               └── silver
+│                   ├── __init__.py
+│                   ├── deliveries.py
+│                   ├── innings.py
+│                   ├── matches.py
+│                   ├── officials.py
+│                   └── persons.py
+├── storage
+├── tests
+│   ├── __init__.py
+│   ├── __pycache__
+│   │   └── __init__.cpython-313.pyc
+│   ├── contract
+│   ├── data_quality
+│   ├── fixtures
+│   ├── integration
+│   │   ├── __init__.py
+│   │   └── transform
+│   │       ├── __init__.py
+│   │       └── polars
+│   │           ├── __init__.py
+│   │           └── bronze
+│   │               └── __init__.py
+│   ├── test_smoke.py
+│   └── unit
+│       ├── __init__.py
+│       ├── __pycache__
+│       │   ├── __init__.cpython-313.pyc
+│       │   ├── conftest.cpython-313-pytest-8.4.2.pyc
+│       │   ├── test_example.cpython-313-pytest-8.4.2.pyc
+│       │   └── test_settings.cpython-313-pytest-8.4.2.pyc
+│       ├── conftest.py
+│       ├── ingestion
+│       │   ├── __init__.py
+│       │   ├── __pycache__
+│       │   │   └── __init__.cpython-313.pyc
+│       │   └── register
+│       │       ├── __init__.py
+│       │       ├── __pycache__
+│       │       │   ├── __init__.cpython-313.pyc
+│       │       │   ├── test_normalize.cpython-313-pytest-8.4.2.pyc
+│       │       │   └── test_parse.cpython-313-pytest-8.4.2.pyc
+│       │       ├── test_normalize.py
+│       │       └── test_parse.py
+│       ├── test_example.py
+│       ├── test_settings.py
+│       └── transform
+│           ├── __init__.py
+│           ├── __pycache__
+│           │   └── __init__.cpython-313.pyc
+│           └── polars
+│               ├── __init__.py
+│               ├── __pycache__
+│               │   └── __init__.cpython-313.pyc
+│               └── bronze
+│                   ├── __init__.py
+│                   ├── __pycache__
+│                   │   ├── __init__.cpython-313.pyc
+│                   │   └── test_register_loader.cpython-313-pytest-8.4.2.pyc
+│                   └── test_register_loader.py
+└── tree_full_paths.txt
 
-132 directories, 147 files
+152 directories, 310 files

@@ -5,20 +5,11 @@ All MinIO I/O is mocked — no network or Docker required.
 """
 from __future__ import annotations
 
-import hashlib
-import io
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import polars as pl
 import pytest
-
-from cip.ingestion.register.normalize import (
-    RegisterNormalizer,
-    NormalizedRegister,
-    _PEOPLE_FILE,
-    _NAMES_FILE,
-)
+from cip.ingestion.register.normalize import NormalizedRegister, RegisterNormalizer
 
 # ---------------------------------------------------------------------------
 # Fixtures — minimal valid CSVs matching Cricsheet Register schema
@@ -60,6 +51,7 @@ def _make_normalizer(people_bytes=PEOPLE_CSV, names_bytes=NAMES_CSV):
 # 1. Return type and structure
 # ---------------------------------------------------------------------------
 
+
 class TestNormalizedRegisterStructure:
 
     def test_returns_normalized_register_dataclass(self):
@@ -80,6 +72,7 @@ class TestNormalizedRegisterStructure:
 # ---------------------------------------------------------------------------
 # 2. All-string schema enforcement
 # ---------------------------------------------------------------------------
+
 
 class TestAllStringSchema:
 
@@ -105,6 +98,7 @@ class TestAllStringSchema:
 # ---------------------------------------------------------------------------
 # 3. Metadata columns
 # ---------------------------------------------------------------------------
+
 
 class TestMetadataColumns:
     EXPECTED_META_COLS = {"_snapshot_date", "_ingested_at", "_pipeline_run_id", "_row_hash"}
@@ -158,14 +152,13 @@ class TestMetadataColumns:
         cols = result.people.collect().columns
         meta_indices = [i for i, c in enumerate(cols) if c.startswith("_")]
         source_indices = [i for i, c in enumerate(cols) if not c.startswith("_")]
-        assert max(source_indices) < min(meta_indices), (
-            "Metadata columns must appear AFTER all source columns"
-        )
+        assert max(source_indices) < min(meta_indices), "Metadata columns must appear AFTER all source columns"
 
 
 # ---------------------------------------------------------------------------
 # 4. Error handling
 # ---------------------------------------------------------------------------
+
 
 class TestErrorHandling:
 
@@ -202,13 +195,12 @@ class TestErrorHandling:
 # 5. Schema drift resilience
 # ---------------------------------------------------------------------------
 
+
 class TestSchemaDriftResilience:
 
     def test_extra_key_column_is_preserved_as_utf8(self):
         """New key_* columns from Cricsheet must pass through without error."""
-        result = _make_normalizer(
-            people_bytes=PEOPLE_CSV_EXTRA_KEY_COL
-        ).run("2026-05-11", "run-001")
+        result = _make_normalizer(people_bytes=PEOPLE_CSV_EXTRA_KEY_COL).run("2026-05-11", "run-001")
         df = result.people.collect()
         assert "key_cricinfo" in df.columns
         assert df["key_cricinfo"].dtype == pl.Utf8
@@ -217,6 +209,7 @@ class TestSchemaDriftResilience:
 # ---------------------------------------------------------------------------
 # 6. Object key utility
 # ---------------------------------------------------------------------------
+
 
 class TestLandingObjectKey:
 

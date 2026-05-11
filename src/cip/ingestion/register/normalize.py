@@ -32,7 +32,6 @@ from datetime import datetime, timezone
 import polars as pl
 
 from cip.common.logging import get_logger
-from cip.common.settings import get_settings
 from cip.ingestion.io.minio import MinIOClient
 
 logger = get_logger(__name__)
@@ -200,8 +199,8 @@ class RegisterNormalizer:
         # empty string for optional identity keys.
         df = pl.read_csv(
             io.BytesIO(raw_bytes),
-            infer_schema_length=0,    # all columns → Utf8, no type inference
-            null_values=[""],         # empty string → null
+            infer_schema_length=0,  # all columns → Utf8, no type inference
+            null_values=[""],  # empty string → null
             truncate_ragged_lines=True,  # Cricsheet CSVs occasionally have trailing commas
             encoding="utf-8",
         )
@@ -261,10 +260,7 @@ class RegisterNormalizer:
 
         df = df.with_columns(
             pl.concat_str(
-                [
-                    pl.col(c).fill_null("__NULL__")
-                    for c in value_cols
-                ],
+                [pl.col(c).fill_null("__NULL__") for c in value_cols],
                 separator="|",
             )
             .map_elements(
@@ -275,11 +271,13 @@ class RegisterNormalizer:
         )
 
         # Remaining metadata — scalar values broadcast to all rows
-        df = df.with_columns([
-            pl.lit(snapshot_date).alias("_snapshot_date"),
-            pl.lit(ingested_at).alias("_ingested_at"),
-            pl.lit(pipeline_run_id).alias("_pipeline_run_id"),
-        ])
+        df = df.with_columns(
+            [
+                pl.lit(snapshot_date).alias("_snapshot_date"),
+                pl.lit(ingested_at).alias("_ingested_at"),
+                pl.lit(pipeline_run_id).alias("_pipeline_run_id"),
+            ]
+        )
 
         return df
 

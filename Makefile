@@ -39,3 +39,11 @@ test:
 
 pre-commit:
 	poetry run pre-commit run --all-files
+
+# In Makefile — add alongside existing targets
+.PHONY: dag-validate
+dag-validate:
+	docker exec cip-airflow-scheduler \
+		airflow dags list-import-errors
+	docker exec cip-airflow-scheduler \
+		airflow dags list | grep -E "register|archives|silver|bronze"

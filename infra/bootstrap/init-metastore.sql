@@ -302,6 +302,149 @@ COMMENT ON VIEW control.v_dq_failures IS
     'All DQ failures and warnings, ordered newest first.';
 
 -- ============================================================================
+-- TABLE: control.archive_download_log
+--
+-- One row per archive ZIP file per pipeline run.
+-- Tracks every download attempt of Cricsheet match archive ZIPs
+-- (e.g. all_matches.zip, odis.zip, tests.zip, t20s.zip).
+-- Used by the idempotency guard in extract/Bronze tasks to skip
+-- already-processed archive runs.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS control.archive_download_log (
+    id                  BIGSERIAL PRIMARY KEY,
+
+    -- Run identity
+    pipeline_run_id     TEXT        NOT NULL,               -- Airflow run_id or manual UUID
+    dag_id              TEXT        NOT NULL DEFAULT 'dag_ingest_cricsheet_archives',
+
+    -- Source archive metadata
+    archive_file        TEXT        NOT NULL,               -- 'all_matches.zip' | 'odis.zip' | etc.
+    source_url          TEXT        NOT NULL,               -- Full download URL
+    snapshot_date       DATE        NOT NULL,               -- Date of this snapshot (partition key)
+
+    -- File characteristics
+    file_size_bytes     BIGINT,
+    checksum_sha256     TEXT,
+
+    -- Landing path written to MinIO
+    landing_path        TEXT,                               -- s3://cricket-landing/archive_zip/snapshot_date=.../
+
+    -- Extraction tracking
+    extracted_path      TEXT,                               -- s3://cricket-landing/archive_json/snapshot_date=.../
+    file_count          INTEGER,                            -- Number of JSON files extracted from ZIP
+
+    -- Run status and timing
+    status              control.pipeline_status NOT NULL DEFAULT 'RUNNING',
+    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at        TIMESTAMPTZ,
+    error_message       TEXT,
+
+    -- Audit
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_archive_download_log_snapshot_date
+    ON control.archive_download_log (snapshot_date);
+
+CREATE INDEX IF NOT EXISTS idx_archive_download_log_archive_snapshot
+    ON control.archive_download_log (archive_file, snapshot_date);
+
+CREATE INDEX IF NOT EXISTS idx_archive_download_log_checksum
+    ON control.archive_download_log (checksum_sha256);
+
+COMMENT ON TABLE control.archive_download_log IS
+    'Per-archive landing ingestion log for the Cricsheet match archive pipeline. '
+    'Used for idempotency checks before Bronze extraction and load.';
+
+DROP TRIGGER IF EXISTS trg_archive_download_log_updated_at
+    ON control.archive_download_log;
+
+CREATE TRIGGER trg_archive_download_log_updated_at
+    BEFORE UPDATE ON control.archive_download_log
+    FOR EACH ROW EXECUTE FUNCTION control.set_updated_at();
+
+-- ============================================================================
+-- TABLE: control.bronze_match_ingestion_log
+--
+-- One row per pipeline run per archive batch.
+-- Tracks Bronze ingestion of match JSON documents into the
+-- cricket.bronze.match_documents Iceberg table.
+-- Used for idempotency (skip snapshot_date already loaded) and
+-- observability (row counts, duration, errors).
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS control.bronze_match_ingestion_log (
+    id                  BIGSERIAL PRIMARY KEY,
+
+    -- Run identity
+    pipeline_run_id     TEXT        NOT NULL,
+    dag_id              TEXT        NOT NULL DEFAULT 'dag_ingest_cricsheet_archives',
+    archive_download_id BIGINT      REFERENCES control.archive_download_log(id),
+
+    -- Source metadata
+    archive_file        TEXT        NOT NULL,               -- Source ZIP (e.g. 'all_matches.zip')
+    snapshot_date       DATE        NOT NULL,               -- Partition key for Bronze table
+
+    -- Load metrics
+    files_attempted     INTEGER     NOT NULL DEFAULT 0,     -- JSON files attempted
+    files_succeeded     INTEGER     NOT NULL DEFAULT 0,     -- JSON files successfully parsed
+    files_failed        INTEGER     NOT NULL DEFAULT 0,     -- JSON files that raised errors
+    rows_written        BIGINT      NOT NULL DEFAULT 0,     -- Rows appended to Iceberg table
+    bronze_table        TEXT        NOT NULL DEFAULT 'cricket.bronze.match_documents',
+
+    -- Run status and timing
+    status              control.pipeline_status NOT NULL DEFAULT 'RUNNING',
+    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at        TIMESTAMPTZ,
+    duration_seconds    NUMERIC(10,3),
+    error_message       TEXT,
+
+    -- Audit
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bronze_match_ingestion_log_snapshot_date
+    ON control.bronze_match_ingestion_log (snapshot_date);
+
+CREATE INDEX IF NOT EXISTS idx_bronze_match_ingestion_log_pipeline_run
+    ON control.bronze_match_ingestion_log (pipeline_run_id);
+
+CREATE INDEX IF NOT EXISTS idx_bronze_match_ingestion_log_archive_snapshot
+    ON control.bronze_match_ingestion_log (archive_file, snapshot_date);
+
+COMMENT ON TABLE control.bronze_match_ingestion_log IS
+    'Per-run Bronze ingestion log for the Cricsheet match archive pipeline. '
+    'Tracks JSON-to-Iceberg load metrics and idempotency state per snapshot_date.';
+
+DROP TRIGGER IF EXISTS trg_bronze_match_ingestion_log_updated_at
+    ON control.bronze_match_ingestion_log;
+
+CREATE TRIGGER trg_bronze_match_ingestion_log_updated_at
+    BEFORE UPDATE ON control.bronze_match_ingestion_log
+    FOR EACH ROW EXECUTE FUNCTION control.set_updated_at();
+
+-- ============================================================================
+-- VIEW: control.v_latest_archive_snapshot
+-- ============================================================================
+
+CREATE OR REPLACE VIEW control.v_latest_archive_snapshot AS
+SELECT
+    archive_file,
+    MAX(snapshot_date)      AS latest_snapshot,
+    MAX(completed_at)       AS last_completed_at,
+    SUM(file_count)         AS file_count,
+    MAX(status::TEXT)       AS last_status
+FROM control.archive_download_log
+WHERE status = 'SUCCESS'
+GROUP BY archive_file;
+
+COMMENT ON VIEW control.v_latest_archive_snapshot IS
+    'Quick view of the most recent successful download per Cricsheet archive ZIP.';
+
+-- ============================================================================
 -- DONE
 -- ============================================================================
 SELECT 'control schema bootstrap complete' AS result;
