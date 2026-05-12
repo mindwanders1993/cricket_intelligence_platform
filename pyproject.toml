@@ -65,7 +65,7 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B"]
+select = ["E", "F", "B"]
 ignore = []
 
 [tool.black]

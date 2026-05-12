@@ -7,10 +7,12 @@ These tests exist to catch the exact class of bugs fixed on 2026-05-11:
   - DSN construction producing malformed connection strings
   - lru_cache serving stale settings after env var changes
 """
+
 import importlib
 
-import cip.common.settings as s
 import pytest
+
+import cip.common.settings as s
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +29,6 @@ def clear_settings_cache():
 
 
 class TestRepoRootResolution:
-
     def test_repo_root_uses_env_var_when_set(self, tmp_path, monkeypatch):
         """CIP_REPO_ROOT env var must take priority over __file__ resolution."""
         monkeypatch.setenv("CIP_REPO_ROOT", str(tmp_path))
@@ -108,7 +109,6 @@ class TestDockerServiceNameDefaults:
 
 
 class TestDSNConstruction:
-
     def test_postgres_dsn_format(self, monkeypatch):
         monkeypatch.setenv("POSTGRES_HOST", "postgres")
         monkeypatch.setenv("POSTGRES_USER", "cricket_user")
@@ -139,7 +139,6 @@ class TestDSNConstruction:
 
 
 class TestEnvVarOverridePriority:
-
     def test_postgres_host_overridden_by_env(self, monkeypatch):
         monkeypatch.setenv("POSTGRES_HOST", "my-custom-postgres-host")
         cfg = s.get_settings()
@@ -176,7 +175,6 @@ class TestEnvVarOverridePriority:
 
 
 class TestStoragePathProperties:
-
     def test_landing_register_csv_path(self):
         cfg = s.get_settings()
         assert cfg.storage.landing_register_csv.startswith("s3://cricket-landing/")

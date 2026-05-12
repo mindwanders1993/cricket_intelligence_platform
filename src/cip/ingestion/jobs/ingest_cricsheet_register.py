@@ -182,6 +182,9 @@ def task_load_bronze(
         FileNotFoundError: if landing CSVs are absent for this snapshot_date.
         IcebergError:      propagated from PolarsIcebergWriter on Iceberg failures.
     """
+    import psycopg2
+
+    from cip.common.settings import get_settings
     from cip.ingestion.register.normalize import RegisterNormalizer
     from cip.ingestion.register.parse import RegisterParser
     from cip.transform.polars.bronze.register_loader import LoadResult, RegisterLoader
@@ -201,7 +204,27 @@ def task_load_bronze(
     parsed = RegisterParser.parse(normalized)
 
     loader = RegisterLoader.from_settings()
-    result: LoadResult = loader.overwrite_snapshot(parsed) if force else loader.load(parsed)
+    result: LoadResult = loader.overwrite_snapshot(parsed)
+
+    # Mark bronze_loaded in the control table so the audit trail is complete.
+    cfg = get_settings()
+    pg_dsn = cfg.postgres.dsn.replace("postgresql+psycopg2://", "postgresql://")
+    with psycopg2.connect(pg_dsn) as pg_conn:
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE control.register_ingestion_log
+                   SET bronze_loaded    = TRUE,
+                       bronze_loaded_at = NOW(),
+                       updated_at       = NOW()
+                 WHERE snapshot_date    = %s
+                   AND pipeline_run_id  = %s
+                   AND status           = 'SUCCESS'
+                """,
+                (snapshot_date, pipeline_run_id),
+            )
+        pg_conn.commit()
+    logger.info("control.register_ingestion_log bronze_loaded updated", extra={"snapshot_date": snapshot_date})
 
     xcom_payload = {
         "snapshot_date": snapshot_date,
@@ -246,16 +269,14 @@ def task_load_silver(
     Returns:
         XCom dict with row counts per Silver table.
     """
-    from cip.transform.spark.session import get_or_create_spark
-    from cip.transform.spark.silver.persons import RegisterSilverTransform
+    from cip.transform.polars.silver.persons import PolarsRegisterSilverTransform
 
     logger.info(
         "task_load_silver started",
         extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id},
     )
 
-    spark = get_or_create_spark(app_name_suffix="silver-register")
-    transform = RegisterSilverTransform.from_spark(spark)
+    transform = PolarsRegisterSilverTransform.from_settings()
     result = transform.run_all(snapshot_date=snapshot_date, pipeline_run_id=pipeline_run_id)
 
     xcom_payload = {
@@ -273,7 +294,71 @@ def task_load_silver(
 
 
 # ===========================================================================
-# Task 4 — (Future) Run dbt Silver models
+# Task 4 — Run DQ checks (Silver layer)
+# ===========================================================================
+
+
+def task_run_dq(
+    snapshot_date: str,
+    pipeline_run_id: str,
+    **context,
+) -> dict:
+    """
+    Airflow PythonOperator callable — Stage 4.
+
+    Runs all seven Register DQ checks against Silver and Bronze Iceberg tables
+    for the given snapshot_date and persists results to control.dq_results.
+
+    Checks:
+        REG-SLV-001  silver.persons — person_id not null                    BLOCK
+        REG-SLV-002  silver.persons — person_id unique                       BLOCK
+        REG-SLV-003  silver.person_identifiers — key columns not null        BLOCK
+        REG-SLV-004  silver.person_identifiers — unique grain                WARN
+        REG-SLV-005  bronze.register_people row count vs people.csv          BLOCK
+        REG-SLV-006  bronze.register_name_variations row count vs names.csv  BLOCK
+        REG-SLV-007  orphan check — name_variations.identifier in persons    WARN
+
+    Args:
+        snapshot_date:   ISO date string (YYYY-MM-DD).
+        pipeline_run_id: Airflow run_id passed via op_kwargs.
+        **context:       Airflow task context (unused).
+
+    Returns:
+        XCom dict with check counts and status.
+
+    Raises:
+        DQBlockingFailureError: if any BLOCK-severity check fails.
+    """
+    from cip.quality.checks.register_dq import RegisterDQChecker
+
+    logger.info(
+        "task_run_dq started",
+        extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id},
+    )
+
+    checker = RegisterDQChecker.from_settings()
+    summary = checker.run_all(
+        snapshot_date=snapshot_date,
+        pipeline_run_id=pipeline_run_id,
+    )
+
+    xcom_payload = {
+        "snapshot_date": snapshot_date,
+        "pipeline_run_id": pipeline_run_id,
+        "total_checks": len(summary.checks),
+        "passed": summary.passed_count,
+        "failed_or_warned": summary.failed_count,
+        "blocking_failures": len(summary.blocking_failures),
+        "check_ids": [r.check_id for r in summary.checks],
+        "statuses": {r.check_id: r.status for r in summary.checks},
+    }
+
+    logger.info("task_run_dq complete", extra={"xcom": xcom_payload})
+    return xcom_payload
+
+
+# ===========================================================================
+# Task 5 — (Future) Run dbt Silver models
 # ===========================================================================
 
 
@@ -387,13 +472,14 @@ Examples:
     )
     parser.add_argument(
         "--task",
-        choices=["download", "bronze", "silver", "dbt", "all"],
+        choices=["download", "bronze", "silver", "dq", "dbt", "all"],
         default="all",
         help=(
             "Which task to run: "
             "'download' = task_download_and_land, "
             "'bronze' = task_load_bronze, "
-            "'silver' = task_load_silver (PySpark), "
+            "'silver' = task_load_silver, "
+            "'dq' = task_run_dq (Silver DQ checks), "
             "'dbt' = task_run_dbt_silver, "
             "'all' = all tasks in sequence."
         ),
@@ -466,7 +552,14 @@ def main() -> None:
         )
         logger.info("silver result", extra=result)
 
-    if args.task in ("dbt", "all"):
+    if args.task in ("dq", "all"):
+        result = task_run_dq(
+            snapshot_date=snap,
+            pipeline_run_id=run_id,
+        )
+        logger.info("dq result", extra=result)
+
+    if args.task in ("dbt",):
         result = task_run_dbt_silver(
             snapshot_date=snap,
             pipeline_run_id=run_id,

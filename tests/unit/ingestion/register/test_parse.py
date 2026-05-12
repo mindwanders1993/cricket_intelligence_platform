@@ -1,10 +1,12 @@
 # tests/unit/ingestion/register/test_parse.py
 """Unit tests for RegisterParser."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
 import polars as pl
+
 from cip.ingestion.register.normalize import NormalizedRegister
 
 

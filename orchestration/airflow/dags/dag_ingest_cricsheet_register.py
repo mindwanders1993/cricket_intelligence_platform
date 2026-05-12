@@ -40,7 +40,13 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator, ShortCircuitOperator
-from cip.ingestion.jobs.ingest_cricsheet_register import task_download_and_land, task_load_bronze, task_load_silver
+
+from cip.ingestion.jobs.ingest_cricsheet_register import (
+    task_download_and_land,
+    task_load_bronze,
+    task_load_silver,
+    task_run_dq,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,13 +70,17 @@ _DEFAULT_ARGS = {
 # ---------------------------------------------------------------------------
 #
 # _SNAPSHOT_DATE:  User can override via conf["snapshot_date"]; otherwise
-#                  Airflow's logical date (ds = YYYY-MM-DD) is used.
+#                  the actual wall-clock UTC date the task runs is used.
+#                  NOTE: intentionally NOT using `ds` (Airflow logical date /
+#                  data_interval_start) — that gives the interval's start date,
+#                  not today, causing e.g. a run on 2026-05-12 to stamp data
+#                  as snapshot_date=2026-05-03 (the prior Sunday interval).
 # _PIPELINE_RUN_ID: Airflow's run_id is always unique per DAG run — used
 #                   as the pipeline_run_id throughout the control schema.
 # _FORCE:           Defaults to False; set conf["force"] = true to bypass
 #                   idempotency guards in both tasks.
 #
-_SNAPSHOT_DATE = "{{ dag_run.conf.get('snapshot_date', ds) }}"
+_SNAPSHOT_DATE = "{{ dag_run.conf.get('snapshot_date', macros.datetime.utcnow().strftime('%Y-%m-%d')) }}"
 _PIPELINE_RUN_ID = "{{ run_id }}"
 _FORCE = "{{ dag_run.conf.get('force', False) }}"
 
@@ -89,6 +99,7 @@ def _check_infra(**context) -> None:
     fails fast instead of wasting a retry on infrastructure issues.
     """
     import psycopg2
+
     from cip.common.settings import get_settings
     from cip.ingestion.io.minio import MinIOClient
 
@@ -192,14 +203,15 @@ def _log_schema_drift_alert(**context) -> None:
 with DAG(
     dag_id="dag_ingest_cricsheet_register",
     description=(
-        "Cricsheet Register pipeline: Download (people.csv + names.csv) " "→ MinIO landing → Bronze Iceberg tables"
+        "Cricsheet Register pipeline: Download (people.csv + names.csv) "
+        "→ MinIO landing → Bronze Iceberg → Silver Iceberg → DQ checks"
     ),
     start_date=datetime(2026, 5, 1),
     schedule="30 0 * * 0",  # Sunday 00:30 UTC ≡ 06:00 IST
     catchup=False,
     max_active_runs=1,
     default_args=_DEFAULT_ARGS,
-    tags=["ingestion", "register", "landing", "bronze", "cricsheet"],
+    tags=["ingestion", "register", "landing", "bronze", "silver", "dq", "cricsheet"],
     doc_md="""
 ## dag_ingest_cricsheet_register
 
@@ -253,7 +265,6 @@ airflow dags trigger dag_ingest_cricsheet_register \
 - Schema drift history: `SELECT * FROM control.register_schema_versions ORDER BY snapshot_date DESC;`
 """,
 ) as dag:
-
     # ── Task 1: Infrastructure gate ─────────────────────────────────────────
     check_infra = PythonOperator(
         task_id="check_infra",
@@ -343,7 +354,29 @@ airflow dags trigger dag_ingest_cricsheet_register \
         ),
     )
 
-    # ── Task 5: Done marker ──────────────────────────────────────────────────
+    # ── Task 5: Run DQ checks ────────────────────────────────────────────────
+    run_dq = PythonOperator(
+        task_id="run_dq",
+        python_callable=task_run_dq,
+        op_kwargs={
+            "snapshot_date": _SNAPSHOT_DATE,
+            "pipeline_run_id": _PIPELINE_RUN_ID,
+        },
+        execution_timeout=timedelta(minutes=15),
+        doc_md=(
+            "Runs 7 DQ checks against Silver + Bronze Iceberg tables for this snapshot:\n"
+            "- REG-SLV-001  silver.persons — person_id not null (BLOCK)\n"
+            "- REG-SLV-002  silver.persons — person_id unique (BLOCK)\n"
+            "- REG-SLV-003  silver.person_identifiers — key columns not null (BLOCK)\n"
+            "- REG-SLV-004  silver.person_identifiers — unique grain (WARN)\n"
+            "- REG-SLV-005  people.csv landing vs Bronze row count (BLOCK)\n"
+            "- REG-SLV-006  names.csv landing vs Bronze row count (BLOCK)\n"
+            "- REG-SLV-007  orphan identifiers in name_variations (WARN)\n"
+            "Results persisted to control.dq_results. BLOCK failures fail this task."
+        ),
+    )
+
+    # ── Task 6: Done marker ──────────────────────────────────────────────────
     done = EmptyOperator(
         task_id="done",
         trigger_rule="all_done",
@@ -357,11 +390,12 @@ airflow dags trigger dag_ingest_cricsheet_register \
     #             ├─► schema_drift_check ──► schema_drift_alert
     #             └─► load_bronze
     #                   └─► load_silver
-    #                         └─► done
+    #                         └─► run_dq
+    #                               └─► done
     #
     # Note: load_bronze trigger_rule=all_done ensures Bronze runs whether or
     # not the schema drift branch fires. schema_drift_alert is informational.
     #
     check_infra >> download_and_land
     download_and_land >> schema_drift_check >> schema_drift_alert
-    download_and_land >> load_bronze >> load_silver >> done
+    download_and_land >> load_bronze >> load_silver >> run_dq >> done

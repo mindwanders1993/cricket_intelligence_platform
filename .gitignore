@@ -38,3 +38,7 @@ dbt_packages/
 logs/dbt.log
 
 mlruns/
+
+# validation harness output
+validation/runs/*
+!validation/runs/.gitkeep

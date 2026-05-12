@@ -3,12 +3,14 @@
 Unit tests for RegisterNormalizer.
 All MinIO I/O is mocked — no network or Docker required.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
 import polars as pl
 import pytest
+
 from cip.ingestion.register.normalize import NormalizedRegister, RegisterNormalizer
 
 # ---------------------------------------------------------------------------
@@ -53,7 +55,6 @@ def _make_normalizer(people_bytes=PEOPLE_CSV, names_bytes=NAMES_CSV):
 
 
 class TestNormalizedRegisterStructure:
-
     def test_returns_normalized_register_dataclass(self):
         result = _make_normalizer().run("2026-05-11", "run-001")
         assert isinstance(result, NormalizedRegister)
@@ -75,7 +76,6 @@ class TestNormalizedRegisterStructure:
 
 
 class TestAllStringSchema:
-
     def test_all_source_columns_are_utf8(self):
         result = _make_normalizer().run("2026-05-11", "run-001")
         df = result.people.collect()
@@ -161,7 +161,6 @@ class TestMetadataColumns:
 
 
 class TestErrorHandling:
-
     def test_raises_file_not_found_when_landing_is_empty(self):
         mock_minio = MagicMock()
         mock_minio.read_object.return_value = b""
@@ -197,7 +196,6 @@ class TestErrorHandling:
 
 
 class TestSchemaDriftResilience:
-
     def test_extra_key_column_is_preserved_as_utf8(self):
         """New key_* columns from Cricsheet must pass through without error."""
         result = _make_normalizer(people_bytes=PEOPLE_CSV_EXTRA_KEY_COL).run("2026-05-11", "run-001")
@@ -212,7 +210,6 @@ class TestSchemaDriftResilience:
 
 
 class TestLandingObjectKey:
-
     def test_object_key_format(self):
         key = RegisterNormalizer.landing_object_key("people.csv", "2026-05-11")
         assert key == "register_csv/snapshot_date=2026-05-11/people.csv"

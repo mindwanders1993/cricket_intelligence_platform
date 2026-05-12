@@ -4,7 +4,7 @@
 # All MINIO_* and ICEBERG_* env vars take priority over these values.
 
 minio:
-  endpoint: "http://localhost:9000"
+  endpoint: "${MINIO_S3_ENDPOINT:-http://minio:9000}"
   console_url: "http://localhost:9001"
   root_user: "cricket_admin"
   region: "us-east-1"
@@ -34,7 +34,7 @@ iceberg:
     gold: "gold"
 
 postgres:
-  host: "localhost"
+  host: "${POSTGRES_HOST:-postgres}"
   port: 5432
   db: "cricket_platform"
   pool_size: 5

@@ -13,12 +13,14 @@ Tests verify:
     - overwrite_snapshot() calls delete before write
     - LoadResult.total_rows sums correctly
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import polars as pl
+
 from cip.common.contracts.naming import META
 from cip.ingestion.register.parse import ParsedRegister
 from cip.transform.polars.bronze.register_loader import (
@@ -94,7 +96,6 @@ def _mock_loader(row_count: int = 5) -> tuple[RegisterLoader, MagicMock]:
 
 
 class TestTableNameConstants:
-
     def test_persons_table_fqn(self):
         assert TABLE_PERSONS == "cricket.bronze.register_people"
 
@@ -115,7 +116,6 @@ class TestTableNameConstants:
 
 
 class TestLoadResult:
-
     def test_total_rows_sums_all_three(self):
         r = LoadResult(
             persons_rows=3,
@@ -145,7 +145,6 @@ class TestLoadResult:
 
 
 class TestLoad:
-
     def test_create_and_append_called_three_times(self):
         loader, mock_writer = _mock_loader()
         loader.load(_make_parsed())
@@ -217,7 +216,6 @@ class TestLoad:
 
 
 class TestEmptyFrames:
-
     def test_empty_persons_skips_write(self):
         loader, mock_writer = _mock_loader()
         parsed = _make_parsed(p=0, i=5, n=3)
@@ -247,7 +245,6 @@ class TestEmptyFrames:
 
 
 class TestOverwriteSnapshot:
-
     def _make_loader_with_mock_catalog(self, row_count=5):
         """
         Returns (loader, mock_writer) with:
@@ -313,7 +310,6 @@ class TestOverwriteSnapshot:
 
 
 class TestFromSettings:
-
     def test_from_settings_returns_register_loader(self):
         with patch("cip.transform.polars.bronze.register_loader.PolarsIcebergWriter") as mock_cls:
             mock_cls.from_settings.return_value = MagicMock()

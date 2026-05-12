@@ -61,8 +61,21 @@ def _build_spark_iceberg_conf() -> dict[str, str]:
     """
     cfg = get_settings()
     catalog = cfg.iceberg.catalog_name
+    spark_cfg = cfg.spark
+
+    # JAR packages downloaded from Maven on first run (requires internet access).
+    # Iceberg runtime + S3A connector for MinIO access.
+    jars_packages = ",".join(
+        [
+            spark_cfg.iceberg_jar,
+            f"org.apache.hadoop:hadoop-aws:{spark_cfg.hadoop_aws_version}",
+            f"com.amazonaws:aws-java-sdk-bundle:{spark_cfg.aws_java_sdk_version}",
+        ]
+    )
 
     return {
+        # JAR packages (Iceberg runtime + S3A / MinIO)
+        "spark.jars.packages": jars_packages,
         # Iceberg REST catalog
         f"spark.sql.catalog.{catalog}": "org.apache.iceberg.spark.SparkCatalog",
         f"spark.sql.catalog.{catalog}.catalog-impl": "org.apache.iceberg.rest.RESTCatalog",
@@ -71,7 +84,9 @@ def _build_spark_iceberg_conf() -> dict[str, str]:
         f"spark.sql.catalog.{catalog}.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
         f"spark.sql.catalog.{catalog}.s3.endpoint": cfg.storage.endpoint,
         f"spark.sql.catalog.{catalog}.s3.path-style-access": "true",
-        # S3 / MinIO credentials for Spark
+        f"spark.sql.catalog.{catalog}.s3.access-key-id": cfg.storage.root_user,
+        f"spark.sql.catalog.{catalog}.s3.secret-access-key": cfg.storage.root_password.get_secret_value(),
+        # S3A / MinIO credentials for Hadoop filesystem
         "spark.hadoop.fs.s3a.endpoint": cfg.storage.endpoint,
         "spark.hadoop.fs.s3a.access.key": cfg.storage.root_user,
         "spark.hadoop.fs.s3a.secret.key": cfg.storage.root_password.get_secret_value(),
@@ -159,11 +174,14 @@ class PolarsIcebergReader:
         import polars as pl
 
         table = self._resolve_table(fqn)
-        scan = table.scan(
-            selected_fields=tuple(columns) if columns else None,
-            row_filter=row_filter,
-            snapshot_id=snapshot_id,
-        )
+        scan_kwargs: dict = {}
+        if row_filter is not None:
+            scan_kwargs["row_filter"] = row_filter
+        if snapshot_id is not None:
+            scan_kwargs["snapshot_id"] = snapshot_id
+        if columns:
+            scan_kwargs["selected_fields"] = tuple(columns)
+        scan = table.scan(**scan_kwargs)
 
         logger.info(
             "Reading Iceberg table (Polars)",

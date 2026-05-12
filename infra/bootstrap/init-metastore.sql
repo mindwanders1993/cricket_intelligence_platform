@@ -269,15 +269,15 @@ CREATE TRIGGER trg_register_ingestion_log_updated_at
 -- ============================================================================
 
 CREATE OR REPLACE VIEW control.v_latest_register_snapshot AS
-SELECT
+SELECT DISTINCT ON (source_file)
     source_file,
-    MAX(snapshot_date)      AS latest_snapshot,
-    MAX(completed_at)       AS last_completed_at,
-    SUM(row_count)          AS row_count,
-    MAX(status::TEXT)       AS last_status
+    snapshot_date           AS latest_snapshot,
+    completed_at            AS last_completed_at,
+    row_count,
+    status::TEXT            AS last_status
 FROM control.register_ingestion_log
 WHERE status = 'SUCCESS'
-GROUP BY source_file;
+ORDER BY source_file, snapshot_date DESC, completed_at DESC;
 
 COMMENT ON VIEW control.v_latest_register_snapshot IS
     'Quick view of the most recent successful ingestion per Register file.';

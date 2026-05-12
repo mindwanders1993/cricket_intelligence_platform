@@ -6,8 +6,8 @@
       "Host": "postgres",
       "Port": 5432,
       "MaintenanceDB": "cricket_platform",
-      "Username": "cricket_user",
-      "PassFile": "/dev/null",
+      "Username": "postgres",
+      "PassFile": "/pgpassfile",
       "SSLMode": "prefer"
     }
   }

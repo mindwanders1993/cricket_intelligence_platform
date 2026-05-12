@@ -42,9 +42,12 @@ class RegisterSilverTransform:
     Bronze → Silver contract per table:
 
     register_people → silver.persons
+        - Filter to the requested _snapshot_date partition
         - Rename: identifier → person_id
         - Rename: _ingested_at → _bronze_loaded_at  (Silver _ingested_at is fresh)
-        - Deduplicate on person_id (MAX _snapshot_date wins — latest snapshot)
+        - Deduplicate on person_id within the snapshot (Register source is
+          unique per snapshot by contract; dropDuplicates picks an arbitrary
+          row if duplicates ever appear — not MAX-snapshot semantics)
 
     register_identifiers → silver.person_identifiers
         - Rename: key_source → source_system
@@ -134,6 +137,7 @@ class RegisterSilverTransform:
             snapshot_date=snapshot_date,
             pipeline_run_id=pipeline_run_id,
             source_file="people.csv",
+            partition_cols=["_snapshot_date"],
         )
         logger.info("silver.persons written", extra={"rows": row_count, "snapshot_date": snapshot_date})
         return row_count
@@ -159,6 +163,7 @@ class RegisterSilverTransform:
             snapshot_date=snapshot_date,
             pipeline_run_id=pipeline_run_id,
             source_file="people.csv",
+            partition_cols=["_snapshot_date"],
         )
         logger.info("silver.person_identifiers written", extra={"rows": row_count, "snapshot_date": snapshot_date})
         return row_count
@@ -183,6 +188,7 @@ class RegisterSilverTransform:
             snapshot_date=snapshot_date,
             pipeline_run_id=pipeline_run_id,
             source_file="names.csv",
+            partition_cols=["_snapshot_date"],
         )
         logger.info("silver.name_variations written", extra={"rows": row_count, "snapshot_date": snapshot_date})
         return row_count
