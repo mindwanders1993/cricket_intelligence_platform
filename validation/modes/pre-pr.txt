@@ -1,0 +1,25 @@
+# pre-pr mode: full T1, no AI tokens. Run before opening a PR.
+# Requires Docker. Skips Airflow E2E (heavy — that's milestone-only).
+
+# Foundation (no infra)
+01_file_audit
+02_env_vars
+03_lint
+04_unit_tests
+
+# Bring up infra
+05_compose_up
+06_bootstrap
+07_dag_validate
+
+# Exercise the pipeline
+09_run_pipeline
+
+# Validate side-effects
+11_pg_control
+12_minio_landing
+13_bronze_inspect
+14_silver_inspect
+
+# Re-run for idempotency
+16_rerun_idempotency

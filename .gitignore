@@ -17,9 +17,24 @@ htmlcov/
 dmypy.json
 .ipynb_checkpoints/
 
-storage/external/
-storage/artifacts/
-storage/duckdb/
+# local dev artifacts — never committed (scratch, data downloads, logs, planning PDFs)
+local/
+
+# generated knowledge graphs
+graphify-out/
+gemini-graphify-out/
+
+# runtime storage
+storage/
+
+# empty docker placeholder
+docker/
+
+# Claude Code local state
+.claude/settings.local.json
+.claude/worktrees/
+.claude/projects/
+
 .env
 *.log
 *.pid

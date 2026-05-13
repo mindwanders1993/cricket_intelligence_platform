@@ -1,0 +1,6 @@
+# pre-push mode: T1 only, no infra required. Target <30s.
+# Wire this into .git/hooks/pre-push once you trust it.
+01_file_audit
+02_env_vars
+03_lint
+04_unit_tests
