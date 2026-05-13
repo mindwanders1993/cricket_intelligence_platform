@@ -26,9 +26,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # ---------------------------------------------------------------------------
 # Repo root resolution — works regardless of where Python is invoked from
 # ---------------------------------------------------------------------------
-_REPO_ROOT = Path(
-    os.environ.get("CIP_REPO_ROOT", "")
-) if os.environ.get("CIP_REPO_ROOT") else Path(__file__).resolve().parents[3]
+_REPO_ROOT = (
+    Path(os.environ.get("CIP_REPO_ROOT", ""))
+    if os.environ.get("CIP_REPO_ROOT")
+    else Path(__file__).resolve().parents[3]
+)
 
 _CONF_BASE = _REPO_ROOT / "conf" / "base"
 _ENV_FILE = _REPO_ROOT / ".env"
@@ -53,9 +55,17 @@ def _load_yaml(name: str) -> dict:
 class StorageSettings(BaseSettings):
     """MinIO / S3-compatible object storage. Maps to conf/base/storage.yaml"""
 
-    model_config = SettingsConfigDict(env_prefix="MINIO_", env_file=str(_ENV_FILE), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="MINIO_",
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
-    endpoint: str = Field(default="http://localhost:9000", validation_alias="MINIO_S3_ENDPOINT", description="MinIO API endpoint")
+    endpoint: str = Field(
+        default="http://minio:9000",
+        validation_alias="MINIO_S3_ENDPOINT",
+        description="MinIO API endpoint",
+    )
     console_url: str = Field(default="http://localhost:9001")
     root_user: str = Field(default="cricket_admin")
     root_password: SecretStr = Field(default=SecretStr("cricket_secret"))
@@ -96,9 +106,13 @@ class StorageSettings(BaseSettings):
 class IcebergSettings(BaseSettings):
     """Apache Iceberg REST catalog. Maps to conf/base/storage.yaml [iceberg] section."""
 
-    model_config = SettingsConfigDict(env_prefix="ICEBERG_", env_file=str(_ENV_FILE), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="ICEBERG_",
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
-    rest_uri: str = Field(default="http://localhost:8181")
+    rest_uri: str = Field(default="http://iceberg-rest:8181")
     warehouse_bucket: str = Field(default="iceberg-warehouse")
     catalog_name: str = Field(default="cricket")
     namespace_bronze: str = Field(default="bronze")
@@ -113,7 +127,11 @@ class IcebergSettings(BaseSettings):
 class PostgresSettings(BaseSettings):
     """PostgreSQL control DB. Maps to conf/base/storage.yaml [postgres] section."""
 
-    model_config = SettingsConfigDict(env_prefix="POSTGRES_", env_file=str(_ENV_FILE), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="POSTGRES_",
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
     host: str = Field(default="postgres")
     port: int = Field(default=5432)
@@ -136,7 +154,11 @@ class PostgresSettings(BaseSettings):
 class AirflowSettings(BaseSettings):
     """Airflow orchestration config. Maps to conf/base/airflow.yaml"""
 
-    model_config = SettingsConfigDict(env_prefix="AIRFLOW_", env_file=str(_ENV_FILE), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="AIRFLOW_",
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
     webserver_url: str = Field(default="http://localhost:8080")
     admin_user: str = Field(default="admin")
@@ -150,7 +172,11 @@ class AirflowSettings(BaseSettings):
 class SparkSettings(BaseSettings):
     """PySpark job config. Maps to conf/base/spark.yaml"""
 
-    model_config = SettingsConfigDict(env_prefix="SPARK_", env_file=str(_ENV_FILE), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="SPARK_",
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
     master: str = Field(default="local[*]")
     app_name_prefix: str = Field(default="cricket-platform")
@@ -169,7 +195,11 @@ class SparkSettings(BaseSettings):
 class PolarsSettings(BaseSettings):
     """Polars ingestion config. Maps to conf/base/polars.yaml"""
 
-    model_config = SettingsConfigDict(env_prefix="POLARS_", env_file=str(_ENV_FILE), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="POLARS_",
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
     streaming_chunk_size: int = Field(default=10_000)
     max_threads: int = Field(default=4)
@@ -179,7 +209,11 @@ class PolarsSettings(BaseSettings):
 class DuckDBSettings(BaseSettings):
     """DuckDB serving config. Maps to conf/base/duckdb.yaml"""
 
-    model_config = SettingsConfigDict(env_prefix="DUCKDB_", env_file=str(_ENV_FILE), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="DUCKDB_",
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
     db_path: Path = Field(default=_REPO_ROOT / "storage" / "duckdb" / "cricket.duckdb")
     memory_limit: str = Field(default="2GB")
@@ -190,7 +224,11 @@ class DuckDBSettings(BaseSettings):
 class DbtSettings(BaseSettings):
     """dbt Core config. Maps to conf/base/dbt.yaml"""
 
-    model_config = SettingsConfigDict(env_prefix="DBT_", env_file=str(_ENV_FILE), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="DBT_",
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
     project_dir: Path = Field(default=_REPO_ROOT / "models" / "dbt")
     profiles_dir: Path = Field(default=_REPO_ROOT / "models" / "dbt" / "profiles")
@@ -201,9 +239,13 @@ class DbtSettings(BaseSettings):
 class MLflowSettings(BaseSettings):
     """MLflow tracking config. Maps to conf/base/mlflow.yaml"""
 
-    model_config = SettingsConfigDict(env_prefix="MLFLOW_", env_file=str(_ENV_FILE), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="MLFLOW_",
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
-    tracking_uri: str = Field(default="http://localhost:5001")
+    tracking_uri: str = Field(default="http://mlflow:5001")
     experiment_prefix: str = Field(default="cricket-platform")
     artifact_root: str = Field(default="s3://mlflow-artifacts/")
     registry_uri: str = Field(default="")
@@ -218,22 +260,28 @@ class MLflowSettings(BaseSettings):
 class AISettings(BaseSettings):
     """AI assistant config. Maps to conf/base/ai.yaml"""
 
-    model_config = SettingsConfigDict(env_prefix="AI_", env_file=str(_ENV_FILE), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="AI_",
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
     ollama_base_url: str = Field(default="http://localhost:11434")
     ollama_model: str = Field(default="llama3.1:8b")
     ollama_timeout_seconds: int = Field(default=120)
     embedding_model: str = Field(default="nomic-embed-text")
     max_sql_result_rows: int = Field(default=500)
-    prompt_registry_path: Path = Field(
-        default=_REPO_ROOT / "src" / "cip" / "serving" / "ai" / "prompt_registry"
-    )
+    prompt_registry_path: Path = Field(default=_REPO_ROOT / "src" / "cip" / "serving" / "ai" / "prompt_registry")
 
 
 class PathSettings(BaseSettings):
     """Repo-relative path constants. Maps to conf/base/paths.yaml"""
 
-    model_config = SettingsConfigDict(env_prefix="PATH_", env_file=str(_ENV_FILE), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="PATH_",
+        env_file=str(_ENV_FILE),
+        extra="ignore",
+    )
 
     repo_root: Path = Field(default=_REPO_ROOT)
     conf_base: Path = Field(default=_CONF_BASE)

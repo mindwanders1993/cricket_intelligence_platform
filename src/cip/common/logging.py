@@ -247,6 +247,13 @@ def _install_root_handler(log_level: str, use_json: bool) -> None:
     if _ROOT_HANDLER_INSTALLED:
         return
 
+    import os
+    if os.environ.get("AIRFLOW_CTX_DAG_ID"):
+        # Do not override root handlers when running inside an Airflow task,
+        # as it causes an infinite recursion loop via sys.stdout interception.
+        _ROOT_HANDLER_INSTALLED = True
+        return
+
     root = logging.getLogger()
     root.setLevel(log_level)
 

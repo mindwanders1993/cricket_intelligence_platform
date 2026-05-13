@@ -258,6 +258,14 @@ class PartitionStrategy:
             ),
             write_order=["source_system", "source_identifier"],
         ),
+        "name_variations": TablePartitionSpec(
+            table_fqn="cricket.silver.name_variations",
+            fields=[
+                PartitionField(column=META.SNAPSHOT_DATE, transform="month", name="snapshot_month"),
+            ],
+            query_pattern="Alias lookups — small table, monthly partition sufficient",
+            write_order=["identifier", "name"],
+        ),
         "match_players": TablePartitionSpec(
             table_fqn="cricket.silver.match_players",
             fields=[

@@ -91,6 +91,7 @@ class TableName:
             "competitions",
             "persons",
             "person_identifiers",
+            "name_variations",
             "match_players",
             "match_officials",
         }

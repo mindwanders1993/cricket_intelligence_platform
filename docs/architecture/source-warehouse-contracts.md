@@ -220,10 +220,10 @@ This enables point-in-time reprocessing without re-downloading from Cricsheet.
 #### B.1.2 Iceberg Namespace Layout
 
 ```
-catalog: cricket_platform
+catalog: cricket
 ├── namespace: bronze
 │   ├── bronze.match_documents
-│   ├── bronze.register_persons
+│   ├── bronze.register_people
 │   ├── bronze.register_identifiers
 │   └── bronze.register_name_variations
 │
@@ -362,7 +362,7 @@ no duplicate rows, no missing rows, no side effects.
 |---|---|---|
 | BRZ-IDEM-001 | Re-ingesting a match file with same `(match_id, revision)` must produce no new rows | Before write: check `EXISTS (SELECT 1 FROM bronze.match_documents WHERE match_id = ? AND _revision = ?)`. Skip if found. |
 | BRZ-IDEM-002 | Re-ingesting a match file with a new `revision` must append a new row (retain history) | `(match_id, revision)` is unique in Bronze; append is always safe for a new revision |
-| BRZ-IDEM-003 | Register full reload on re-run must not duplicate rows | Bronze register tables use `MERGE INTO ... ON (identifier, _snapshot_date)` — update if `_row_hash` changed, skip if unchanged |
+| BRZ-IDEM-003 | Register full reload on re-run must not duplicate rows | Bronze register tables use `overwrite_partition` (delete-partition-then-append) — full replace per snapshot date |
 | BRZ-IDEM-004 | `_row_hash` guard | Even without explicit dedup logic, identical `_row_hash` + PK = no-write signal |
 
 #### B.4.3 Silver Layer
@@ -403,7 +403,7 @@ CREATE TABLE control.source_download_log (
 );
 
 -- Tracks every Bronze ingestion batch
-CREATE TABLE control.bronze_ingestion_log (
+CREATE TABLE control.register_ingestion_log (
     id              SERIAL PRIMARY KEY,
     table_name      VARCHAR(100)  NOT NULL,
     pipeline_run_id VARCHAR(250)  NOT NULL,
@@ -418,7 +418,7 @@ CREATE TABLE control.bronze_ingestion_log (
 );
 
 -- Tracks schema fingerprints for drift detection
-CREATE TABLE control.schema_fingerprints (
+CREATE TABLE control.register_schema_versions (
     id              SERIAL PRIMARY KEY,
     source_id       VARCHAR(20)   NOT NULL,
     snapshot_date   DATE          NOT NULL,

@@ -14,10 +14,13 @@ services:
         pydantic-settings==2.14.1
         psycopg2-binary==2.9.12
         httpx==0.28.1
-        boto3==1.43.6
+        boto3
         structlog==24.4.0
         python-dotenv==1.2.2
         PyYAML==6.0.3
+        polars==0.20.31
+        pyarrow==24.0.0
+        pyiceberg[s3fs]==0.11.1
     volumes:
       - ../../orchestration/airflow/dags:/opt/airflow/dags
       - ../../orchestration/airflow/plugins:/opt/airflow/plugins
@@ -33,10 +36,13 @@ services:
         pydantic-settings==2.14.1
         psycopg2-binary==2.9.12
         httpx==0.28.1
-        boto3==1.43.6
+        boto3
         structlog==24.4.0
         python-dotenv==1.2.2
         PyYAML==6.0.3
+        polars==0.20.31
+        pyarrow==24.0.0
+        pyiceberg[s3fs]==0.11.1
     volumes:
       - ../../orchestration/airflow/dags:/opt/airflow/dags
       - ../../orchestration/airflow/plugins:/opt/airflow/plugins
@@ -80,12 +86,9 @@ services:
     image: ghcr.io/mlflow/mlflow:v2.14.1
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
       minio:
         condition: service_healthy
     environment:
-      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB}
       MLFLOW_DEFAULT_ARTIFACT_ROOT: s3://mlflow-artifacts/
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
@@ -93,14 +96,16 @@ services:
       AWS_S3_PATH_STYLE_ACCESS: "true"
     command: >
       mlflow server
-        --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB}
+        --backend-store-uri sqlite:////mlflow/mlflow.db
         --default-artifact-root s3://mlflow-artifacts/
         --host 0.0.0.0
         --port 5000
+    volumes:
+      - mlflow_data:/mlflow
     ports:
-      - "${MLFLOW_PORT:-5000}:5000"
+      - "${MLFLOW_PORT:-5001}:5000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -112,6 +117,7 @@ services:
   pgadmin:
     image: dpage/pgadmin4:8.6
     restart: unless-stopped
+    user: root
     depends_on:
       postgres:
         condition: service_healthy
@@ -120,9 +126,12 @@ services:
       PGADMIN_DEFAULT_PASSWORD: admin123
       PGADMIN_CONFIG_SERVER_MODE: "False"
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    entrypoint: ["/setup-pgpass.sh"]
     volumes:
       - pgadmin_data:/var/lib/pgadmin
       - ../../infra/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - ../../infra/pgadmin/setup-pgpass.sh:/setup-pgpass.sh:ro
     ports:
       - "${PGADMIN_PORT:-5050}:80"
 
@@ -131,3 +140,4 @@ volumes:
   minio_data:
   postgres_data:
   pgadmin_data:
+  mlflow_data:

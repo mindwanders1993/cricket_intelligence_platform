@@ -23,17 +23,16 @@ from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 
 from cip.common.contracts.enums import Layer
-from cip.common.contracts.naming import (
-    META,
-    IcebergProperties,
-    TableName,
-)
+from cip.common.contracts.naming import META, IcebergProperties, TableName
 from cip.common.exceptions import IcebergError
 from cip.common.logging import get_context, get_logger
 from cip.common.settings import get_settings
 
 if TYPE_CHECKING:
     import polars as pl
+    import pyarrow as pa
+    from pyiceberg.partitioning import PartitionSpec
+    from pyiceberg.schema import Schema
     from pyspark.sql import DataFrame as SparkDataFrame
     from pyspark.sql import SparkSession
 
@@ -54,6 +53,57 @@ def _compute_schema_hash(column_names: list[str], column_types: list[str]) -> st
     pairs = sorted(zip(column_names, column_types, strict=False))
     raw = json.dumps(pairs, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _build_partition_spec(
+    iceberg_schema: "Schema",
+    partition_cols: list[str],
+) -> "PartitionSpec":
+    """
+    Build a PyIceberg PartitionSpec with an IdentityTransform for each
+    partition column.
+
+    Bronze tables always partition by _snapshot_date (Identity transform —
+    no bucketing or truncation). Silver/Gold tables may add additional
+    partition columns (e.g. match_type, season) using the same approach.
+
+    Args:
+        iceberg_schema: PyIceberg schema of the table.
+        partition_cols: Ordered list of column names to partition by.
+                        Each column gets an IdentityTransform.
+
+    Returns:
+        PyIceberg PartitionSpec ready to pass to catalog.create_table().
+
+    Raises:
+        ValueError: If any partition column is absent from the schema.
+    """
+    from pyiceberg.partitioning import PartitionField, PartitionSpec
+    from pyiceberg.transforms import IdentityTransform
+
+    partition_fields: list[PartitionField] = []
+    for i, col in enumerate(partition_cols):
+        try:
+            iceberg_field = iceberg_schema.find_field(col)
+        except Exception:
+            iceberg_field = None
+
+        if iceberg_field is None:
+            available = [f.name for f in iceberg_schema.fields]
+            raise ValueError(f"Partition column '{col}' not found in schema. " f"Available columns: {available}")
+
+        partition_fields.append(
+            PartitionField(
+                source_id=iceberg_field.field_id,
+                # Iceberg convention: partition field IDs start at 1000 and
+                # must not collide with data field IDs (which start at 1).
+                field_id=1000 + i,
+                transform=IdentityTransform(),
+                name=col,
+            )
+        )
+
+    return PartitionSpec(*partition_fields)
 
 
 def _inject_meta_polars(
@@ -238,40 +288,119 @@ class PolarsIcebergWriter:
             fqn:             Iceberg table FQN
             snapshot_date:   Logical processing date
             layer:           Layer enum — used to apply default table properties
-            partition_cols:  List of column names to partition by
+            partition_cols:  Columns to partition by (IdentityTransform per col).
+                             For Bronze tables this is always ["_snapshot_date"].
+                             Passed to _build_partition_spec() which converts
+                             column names → PyIceberg PartitionSpec with proper
+                             field IDs.  If None, the table is unpartitioned.
             pipeline_run_id: Optional run UUID
             source_file:     Source file name for metadata
             source_url:      Source URL for metadata
         """
 
         run_id = pipeline_run_id or str(uuid.uuid4())
+
+        # Inject metadata columns BEFORE deriving arrow_schema so that
+        # partition columns like _snapshot_date are already present in
+        # the schema when _build_partition_spec() resolves field IDs.
         df = _inject_meta_polars(df, snapshot_date, run_id, source_file, source_url)
-        arrow_schema = df.to_arrow().schema
-        catalog = self._catalog
 
-        if not self._table_exists(fqn):
-            logger.info("Creating Iceberg table", extra={"table": fqn, "layer": layer})
-            catalog_name, namespace, table_name = TableName.from_fqn(fqn)
+        # _ensure_table_exists uses the arrow schema, so convert once here.
+        # PyIceberg 0.11.1 requires _pyarrow_to_schema_without_ids + assign_fresh_schema_ids
+        # (see writers.py module docstring for full explanation).
+        self._ensure_table_exists(df.to_arrow().schema, fqn, layer, partition_cols)
 
-            # Ensure namespace exists
-            try:
-                catalog.create_namespace_if_not_exists(namespace)
-            except Exception:
-                pass  # namespace may already exist
-
-            props = {
-                Layer.BRONZE: IcebergProperties.bronze_defaults(),
-                Layer.SILVER: IcebergProperties.silver_defaults(),
-                Layer.GOLD: IcebergProperties.gold_defaults(),
-            }.get(layer, {})
-
-            catalog.create_table(
-                identifier=fqn,
-                schema=arrow_schema,
-                properties=props,
-            )
-
+        # append() calls _inject_meta_polars again, which is safe because
+        # the helper skips columns that are already present.
         return self.append(df, fqn, snapshot_date, run_id, source_file, source_url)
+
+    def overwrite_partition(
+        self,
+        df: "pl.DataFrame",
+        fqn: str,
+        snapshot_date: str | date,
+        layer: Layer,
+        partition_cols: list[str] | None = None,
+        pipeline_run_id: str | None = None,
+        source_file: str = "",
+        source_url: str = "",
+    ) -> int:
+        """
+        Create the Iceberg table if it does not exist, then overwrite only the
+        snapshot_date partition with the incoming DataFrame.
+
+        Idempotent: re-running for the same snapshot replaces only that
+        partition, leaving other partitions untouched.  Equivalent to
+        SparkIcebergWriter.dynamic_overwrite() — the standard Silver write mode.
+        """
+        from pyiceberg.expressions import EqualTo
+
+        run_id = pipeline_run_id or str(uuid.uuid4())
+        snap = snapshot_date.isoformat() if isinstance(snapshot_date, date) else snapshot_date
+
+        df = _inject_meta_polars(df, snapshot_date, run_id, source_file, source_url)
+        arrow_table = df.to_arrow()
+        row_count = len(arrow_table)
+
+        started = time.monotonic()
+        logger.info(
+            "Writing Iceberg table (Polars overwrite partition)",
+            extra={"table": fqn, "rows": row_count, "snapshot_date": snap},
+        )
+
+        self._ensure_table_exists(arrow_table.schema, fqn, layer, partition_cols)
+
+        try:
+            table = self._catalog.load_table(fqn)
+            table.overwrite(arrow_table, overwrite_filter=EqualTo(META.SNAPSHOT_DATE, snap))
+        except Exception as exc:
+            raise IcebergError(
+                f"Polars partition overwrite failed on {fqn}: {exc}",
+                table=fqn,
+                rows=row_count,
+            ) from exc
+
+        duration = round(time.monotonic() - started, 3)
+        logger.info(
+            "Iceberg overwrite partition complete (Polars)",
+            extra={"table": fqn, "rows": row_count, "duration_seconds": duration},
+        )
+        return row_count
+
+    def _ensure_table_exists(
+        self,
+        arrow_schema: "pa.Schema",
+        fqn: str,
+        layer: Layer,
+        partition_cols: list[str] | None,
+    ) -> None:
+        if self._table_exists(fqn):
+            return
+
+        from pyiceberg.io.pyarrow import _pyarrow_to_schema_without_ids
+        from pyiceberg.schema import assign_fresh_schema_ids
+
+        temp_schema = _pyarrow_to_schema_without_ids(arrow_schema)
+        iceberg_schema = assign_fresh_schema_ids(temp_schema)
+
+        logger.info("Creating Iceberg table", extra={"table": fqn, "partition_cols": partition_cols or []})
+        _catalog_name, namespace, _table_name = TableName.from_fqn(fqn)
+        try:
+            self._catalog.create_namespace_if_not_exists(namespace)
+        except Exception:
+            pass
+
+        props = {
+            Layer.BRONZE: IcebergProperties.bronze_defaults(),
+            Layer.SILVER: IcebergProperties.silver_defaults(),
+            Layer.GOLD: IcebergProperties.gold_defaults(),
+        }.get(layer, {})
+
+        create_kwargs: dict = {"identifier": fqn, "schema": iceberg_schema, "properties": props}
+        if partition_cols:
+            create_kwargs["partition_spec"] = _build_partition_spec(iceberg_schema, partition_cols)
+
+        self._catalog.create_table(**create_kwargs)
 
     def _table_exists(self, fqn: str) -> bool:
         try:
@@ -343,6 +472,25 @@ class SparkIcebergWriter:
             extra={"table": fqn, "duration_seconds": duration},
         )
 
+    def _ensure_table_exists(
+        self,
+        df: "SparkDataFrame",
+        fqn: str,
+        partition_cols: list[str] | None = None,
+    ) -> None:
+        """Create the Iceberg table using df's schema if it does not already exist."""
+        try:
+            self._spark.sql(f"SELECT 1 FROM {fqn} LIMIT 0")
+            return  # table exists
+        except Exception:
+            pass  # table not found — proceed to create
+
+        logger.info("Iceberg table not found — creating", extra={"table": fqn, "partition_cols": partition_cols or []})
+        writer = df.writeTo(fqn)
+        if partition_cols:
+            writer = writer.partitionedBy(*partition_cols)
+        writer.create()
+
     def dynamic_overwrite(
         self,
         df: "SparkDataFrame",
@@ -351,12 +499,14 @@ class SparkIcebergWriter:
         pipeline_run_id: str | None = None,
         source_file: str = "",
         source_url: str = "",
+        partition_cols: list[str] | None = None,
     ) -> None:
         """
         Overwrite only the partitions present in df.
         Idempotent for partition-aligned reruns — re-running a day
         replaces only that day's partition, not the whole table.
 
+        Creates the table on first run using df's schema and partition_cols.
         This is the standard write mode for Silver jobs.
         """
         run_id = pipeline_run_id or str(uuid.uuid4())
@@ -366,6 +516,7 @@ class SparkIcebergWriter:
             "Writing Iceberg table (Spark dynamic overwrite)",
             extra={"table": fqn, "snapshot_date": snapshot_date},
         )
+        self._ensure_table_exists(df, fqn, partition_cols)
         (df.writeTo(fqn).option("overwrite-mode", "dynamic").overwritePartitions())
         logger.info("Dynamic overwrite complete", extra={"table": fqn})
 
@@ -445,15 +596,21 @@ class SparkIcebergWriter:
         Create an Iceberg table using the DataFrame schema if it does not exist.
         Applies standard table properties for the given layer.
         """
+        try:
+            self._spark.sql(f"SELECT 1 FROM {fqn} LIMIT 0")
+            return  # table already exists
+        except Exception:
+            pass
+
         props = {
             Layer.BRONZE: IcebergProperties.bronze_defaults(),
             Layer.SILVER: IcebergProperties.silver_defaults(),
             Layer.GOLD: IcebergProperties.gold_defaults(),
         }.get(layer, {})
 
-        writer = df.writeTo(fqn).tableProperty
+        writer = df.writeTo(fqn)
         for k, v in props.items():
-            writer = writer(k, v)
+            writer = writer.tableProperty(k, v)
 
         if partition_cols:
             writer = writer.partitionedBy(*partition_cols)
@@ -462,4 +619,4 @@ class SparkIcebergWriter:
             "Creating Iceberg table if not exists",
             extra={"table": fqn, "layer": layer, "partition_cols": partition_cols},
         )
-        writer.createOrReplace()
+        writer.create()

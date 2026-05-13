@@ -1,0 +1,37 @@
+# milestone mode: full T1 + T2 + T3. Run at the end of each Big Task.
+# Costs AI tokens (~$1-2/run). Set SKIP_AI=1 to dry-run without burning tokens.
+
+# Foundation (no infra)
+01_file_audit
+02_env_vars
+03_lint
+04_unit_tests
+
+# Bring up infra
+05_compose_up
+06_bootstrap
+07_dag_validate
+
+# T2: contract drift audit (Sonnet)
+08_contract_diff
+
+# Exercise the pipeline (direct + DAG-orchestrated)
+09_run_pipeline
+15_airflow_e2e
+
+# Validate side-effects
+11_pg_control
+12_minio_landing
+13_bronze_inspect
+13b_bronze_semantic   # T2: Sonnet — anomaly check on Bronze samples
+14_silver_inspect
+14b_silver_semantic   # T2: Sonnet — anomaly check on Silver samples
+
+# Re-run for idempotency
+16_rerun_idempotency
+
+# T2: triage failures (only invokes AI if any FAIL exists)
+17_failure_triage
+
+# T3: synthesize milestone report (Opus)
+18_final_report
