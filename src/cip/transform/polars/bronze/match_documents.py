@@ -352,9 +352,7 @@ class MatchBronzeLoader:
                 row = cur.fetchone()
         return row[0] if row else None
 
-    def _insert_log_row(
-        self, pipeline_run_id: str, snapshot_date: str, archive_download_id: int | None
-    ) -> int:
+    def _insert_log_row(self, pipeline_run_id: str, snapshot_date: str, archive_download_id: int | None) -> int:
         import psycopg2
 
         with psycopg2.connect(self._pg_dsn) as conn:

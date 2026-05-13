@@ -123,8 +123,7 @@ def _check_infra(**context) -> None:
 with DAG(
     dag_id="dag_ingest_cricsheet_archives",
     description=(
-        "Cricsheet match archive pipeline: Download all_json.zip "
-        "→ Extract JSONs → Bronze Iceberg → DQ checks"
+        "Cricsheet match archive pipeline: Download all_json.zip " "→ Extract JSONs → Bronze Iceberg → DQ checks"
     ),
     start_date=datetime(2026, 5, 1),
     schedule="0 1 1 * *",  # 1st of each month at 01:00 UTC

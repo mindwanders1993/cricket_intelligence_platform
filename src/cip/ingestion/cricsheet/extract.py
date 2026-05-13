@@ -206,10 +206,7 @@ class ArchiveExtractor:
                 return None
 
         with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
-            futures = {
-                executor.submit(_upload_one, name, content): name
-                for name, content in file_contents.items()
-            }
+            futures = {executor.submit(_upload_one, name, content): name for name, content in file_contents.items()}
             for future in as_completed(futures):
                 name = futures[future]
                 result = future.result()
@@ -268,9 +265,7 @@ class ArchiveExtractor:
                 row = cur.fetchone()
         return row[0] if row else None
 
-    def _update_log_extracted(
-        self, log_id: int, extracted_path: str, file_count: int
-    ) -> None:
+    def _update_log_extracted(self, log_id: int, extracted_path: str, file_count: int) -> None:
         import psycopg2
 
         with psycopg2.connect(self._pg_dsn) as conn:

@@ -181,9 +181,7 @@ class MatchBronzeDQChecker:
             failure_pct=_pct(dup_count, total),
         )
 
-    def _check_row_count_vs_manifest(
-        self, df: pl.DataFrame, manifest: dict | None
-    ) -> DQCheckResult:
+    def _check_row_count_vs_manifest(self, df: pl.DataFrame, manifest: dict | None) -> DQCheckResult:
         """MAT-BRZ-003: Bronze row count must equal manifest file_count."""
         bronze_rows = df.height
 
@@ -238,12 +236,7 @@ class MatchBronzeDQChecker:
             )
 
         null_rows = df.filter(
-            pl.any_horizontal(
-                [
-                    (pl.col(c).is_null() | pl.col(c).str.strip_chars().eq(""))
-                    for c in available_cols
-                ]
-            )
+            pl.any_horizontal([(pl.col(c).is_null() | pl.col(c).str.strip_chars().eq("")) for c in available_cols])
         ).height
 
         pct = _pct(null_rows, total)

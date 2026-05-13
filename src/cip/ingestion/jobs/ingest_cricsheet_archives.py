@@ -277,9 +277,7 @@ def task_run_dq(
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Run Cricsheet archive ingestion pipeline tasks manually."
-    )
+    p = argparse.ArgumentParser(description="Run Cricsheet archive ingestion pipeline tasks manually.")
     p.add_argument(
         "--snapshot-date",
         default=_today(),
