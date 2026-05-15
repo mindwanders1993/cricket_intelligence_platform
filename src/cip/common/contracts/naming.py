@@ -8,11 +8,11 @@
 # Usage:
 #   from cip.common.contracts.naming import TableName, PathBuilder, MetaColumns
 #
-#   table = TableName.bronze("match_documents")
-#   # → "cricket.bronze.match_documents"
+#   table = TableName.bronze("match_data")
+#   # → "bronze.match_data"
 #
-#   path = PathBuilder.landing_raw_zip("all_matches_json.zip", "2024-11-01")
-#   # → "s3://cricket-landing/raw_zips/snapshot_date=2024-11-01/all_matches_json.zip"
+#   path = PathBuilder.source_match_data_zip("all_json.zip", "2024-11-01")
+#   # → "s3://cricket-source-files/match_data/zip/snapshot_date=2024-11-01/all_json.zip"
 
 from __future__ import annotations
 
@@ -63,9 +63,16 @@ class TableName:
         table     = snake_case entity name
 
     Examples:
-        TableName.bronze("match_documents")   → "cricket.bronze.match_documents"
-        TableName.silver("deliveries")         → "cricket.silver.deliveries"
-        TableName.gold("fact_delivery")        → "cricket.gold.fact_delivery"
+        TableName.bronze("match_data")    → "bronze.match_data"
+        TableName.silver("deliveries")    → "silver.deliveries"
+        TableName.gold("fact_delivery")   → "gold.fact_delivery"
+
+    The Spark catalog (`spark.sql.catalog.cricket = SparkCatalog` with
+    `defaultCatalog=cricket`) resolves these two-segment identifiers via
+    its default catalog, so on-disk paths become `s3://cricket-lakehouse/
+    {layer}/{table}/`.  The `CATALOG` constant is retained for callers
+    that still need to construct the fully-qualified three-segment form
+    (e.g. cross-catalog SQL).
     """
 
     CATALOG: ClassVar[str] = "cricket"
@@ -73,10 +80,10 @@ class TableName:
     # Known table names per layer — used for validation when strict=True
     BRONZE_TABLES: ClassVar[frozenset[str]] = frozenset(
         {
-            "match_documents",
-            "register_people",
-            "register_identifiers",
-            "register_name_variations",
+            "match_data",
+            "people",
+            "people_identifiers",
+            "name_variations",
         }
     )
 
@@ -130,7 +137,12 @@ class TableName:
             }.get(layer, frozenset())
             if known and table not in known:
                 raise ValueError(f"Unknown {layer} table '{table}'. Add it to TableName.{layer.upper()}_TABLES first.")
-        return f"{cls.CATALOG}.{layer}.{table}"
+        # Two-segment FQN — {layer}.{table}. The Spark catalog is named
+        # `cricket` and has `defaultCatalog=cricket`, so SQL identifiers
+        # like `bronze.match_data` resolve correctly without a catalog
+        # prefix. PyIceberg sees namespace=(layer,) directly, which gives
+        # the canonical Iceberg disk layout: warehouse/{layer}/{table}/.
+        return f"{layer}.{table}"
 
     @classmethod
     def bronze(cls, table: str, strict: bool = True) -> str:
@@ -145,15 +157,15 @@ class TableName:
         return cls._fqn(Layer.GOLD, table, strict)
 
     @classmethod
-    def from_fqn(cls, fqn: str) -> tuple[str, str, str]:
+    def from_fqn(cls, fqn: str) -> tuple[str, str]:
         """
-        Parse a FQN back into (catalog, namespace, table).
+        Parse an FQN back into (namespace, table).
         Raises ValueError if the FQN does not match expected format.
         """
         parts = fqn.split(".")
-        if len(parts) != 3:
-            raise ValueError(f"Invalid FQN '{fqn}': expected catalog.namespace.table")
-        return parts[0], parts[1], parts[2]
+        if len(parts) != 2:
+            raise ValueError(f"Invalid FQN '{fqn}': expected namespace.table")
+        return parts[0], parts[1]
 
 
 # ===========================================================================
@@ -163,75 +175,73 @@ class TableName:
 
 class PathBuilder:
     """
-    Builds S3 paths for every layer and prefix in the platform.
+    Builds S3 paths for every dataset and layer in the platform.
 
-    Convention:
-        s3://{bucket}/{prefix}/snapshot_date={date}/{filename}
+    Three buckets total:
+        cricket-source-files  → raw downloads (match_data ZIP/JSON, people_and_names CSV)
+        cricket-lakehouse     → all Iceberg tables (bronze/silver/gold namespaces)
+        cricket-ml-models     → MLflow run artifacts
 
-    All paths include a Hive-style partition prefix for date-based
-    organisation in the landing and bronze layers.
+    Source-file paths follow:
+        s3://cricket-source-files/{dataset}/{format}/snapshot_date={date}/{filename}
+
+    Iceberg paths follow:
+        s3://cricket-lakehouse/{layer}/{table}/
 
     Examples:
-        PathBuilder.landing_raw_zip("all_matches.zip", "2024-11-01")
-        → "s3://cricket-landing/raw_zips/snapshot_date=2024-11-01/all_matches.zip"
+        PathBuilder.source_match_data_zip("all_json.zip", "2024-11-01")
+        → "s3://cricket-source-files/match_data/zip/snapshot_date=2024-11-01/all_json.zip"
 
-        PathBuilder.landing_extracted_json("12345.json", "2024-11-01")
-        → "s3://cricket-landing/extracted_json/snapshot_date=2024-11-01/12345.json"
+        PathBuilder.source_match_data_json("12345.json", "2024-11-01")
+        → "s3://cricket-source-files/match_data/json/snapshot_date=2024-11-01/12345.json"
 
-        PathBuilder.iceberg_table(Layer.SILVER, "deliveries")
-        → "s3://iceberg-warehouse/silver/deliveries/"
+        PathBuilder.source_people_and_names_csv("people.csv", "2024-11-01")
+        → "s3://cricket-source-files/people_and_names/csv/snapshot_date=2024-11-01/people.csv"
+
+        PathBuilder.lakehouse_table(Layer.SILVER, "deliveries")
+        → "s3://cricket-lakehouse/silver/deliveries/"
     """
 
     # Bucket names — must match create-buckets.sh and StorageSettings
-    _BUCKETS: ClassVar[dict[Layer, str]] = {
-        Layer.LANDING: "cricket-landing",
-        Layer.BRONZE: "cricket-bronze",
-        Layer.SILVER: "cricket-silver",
-        Layer.GOLD: "cricket-gold",
-    }
+    SOURCE_FILES_BUCKET: ClassVar[str] = "cricket-source-files"
+    LAKEHOUSE_BUCKET: ClassVar[str] = "cricket-lakehouse"
+    ML_MODELS_BUCKET: ClassVar[str] = "cricket-ml-models"
 
     @staticmethod
     def _partition(snapshot_date: str | date) -> str:
         return f"snapshot_date={_validate_date(snapshot_date)}"
 
-    # --- Landing paths ---
+    # --- Source-file paths ---
 
     @classmethod
-    def landing_raw_zip(cls, file_name: str, snapshot_date: str | date) -> str:
-        return f"s3://cricket-landing/raw_zips/{cls._partition(snapshot_date)}/{file_name}"
+    def source_match_data_zip(cls, file_name: str, snapshot_date: str | date) -> str:
+        return f"s3://{cls.SOURCE_FILES_BUCKET}/match_data/zip/{cls._partition(snapshot_date)}/{file_name}"
 
     @classmethod
-    def landing_extracted_json(cls, file_name: str, snapshot_date: str | date) -> str:
-        return f"s3://cricket-landing/extracted_json/{cls._partition(snapshot_date)}/{file_name}"
+    def source_match_data_json(cls, file_name: str, snapshot_date: str | date) -> str:
+        return f"s3://{cls.SOURCE_FILES_BUCKET}/match_data/json/{cls._partition(snapshot_date)}/{file_name}"
 
     @classmethod
-    def landing_register_csv(cls, file_name: str, snapshot_date: str | date) -> str:
-        return f"s3://cricket-landing/register_csv/{cls._partition(snapshot_date)}/{file_name}"
+    def source_people_and_names_csv(cls, file_name: str, snapshot_date: str | date) -> str:
+        return f"s3://{cls.SOURCE_FILES_BUCKET}/people_and_names/csv/{cls._partition(snapshot_date)}/{file_name}"
 
-    # --- Iceberg warehouse paths (used by REST catalog) ---
+    # --- Lakehouse paths (Iceberg tables, used by REST catalog) ---
 
     @classmethod
-    def iceberg_table(cls, layer: Layer, table: str) -> str:
-        """Root path for an Iceberg table in the warehouse bucket."""
+    def lakehouse_table(cls, layer: Layer, table: str) -> str:
+        """Root path for an Iceberg table in the lakehouse bucket."""
         _validate_name(table, "table")
-        return f"s3://iceberg-warehouse/{layer}/{table}/"
+        return f"s3://{cls.LAKEHOUSE_BUCKET}/{layer}/{table}/"
 
     @classmethod
-    def iceberg_namespace(cls, layer: Layer) -> str:
-        return f"s3://iceberg-warehouse/{layer}/"
+    def lakehouse_namespace(cls, layer: Layer) -> str:
+        return f"s3://{cls.LAKEHOUSE_BUCKET}/{layer}/"
 
-    # --- Bronze layer paths (for direct-write jobs before Iceberg) ---
-
-    @classmethod
-    def bronze_raw(cls, table: str, snapshot_date: str | date) -> str:
-        _validate_name(table, "table")
-        return f"s3://cricket-bronze/{table}/{cls._partition(snapshot_date)}/"
-
-    # --- MLflow artifact paths ---
+    # --- ML model artifact paths ---
 
     @classmethod
-    def mlflow_run(cls, experiment_name: str, run_id: str) -> str:
-        return f"s3://mlflow-artifacts/{experiment_name}/{run_id}/"
+    def ml_model_run(cls, experiment_name: str, run_id: str) -> str:
+        return f"s3://{cls.ML_MODELS_BUCKET}/{experiment_name}/{run_id}/"
 
 
 # ===========================================================================
@@ -325,10 +335,11 @@ class DagNames:
     Used in pipeline_watermark seeds and cross-DAG trigger logic.
     """
 
-    INGEST_ARCHIVES: str = "dag_ingest_cricsheet_archives"
-    INGEST_REGISTER: str = "dag_ingest_cricsheet_register"
-    PARSE_BRONZE: str = "dag_parse_bronze_match_documents"
-    BUILD_SILVER: str = "dag_build_silver_entities"
+    INGEST_MATCH_DATA: str = "dag_ingest_match_data"
+    INGEST_PEOPLE_AND_NAMES: str = "dag_ingest_people_and_names"
+    BUILD_SILVER_MATCH_DATA: str = "dag_build_silver_match_data"
+    BUILD_SILVER_PEOPLE_AND_NAMES: str = "dag_build_silver_people_and_names"
+    PARSE_BRONZE_MATCH_DATA: str = "dag_parse_bronze_match_data"
     RUN_GOLD_DBT: str = "dag_run_gold_dbt_models"
     RUN_QUALITY: str = "dag_run_quality_checks"
     REFRESH_SERVING: str = "dag_refresh_serving_layer"
@@ -338,10 +349,11 @@ class DagNames:
     @classmethod
     def all(cls) -> list[str]:
         return [
-            cls.INGEST_ARCHIVES,
-            cls.INGEST_REGISTER,
-            cls.PARSE_BRONZE,
-            cls.BUILD_SILVER,
+            cls.INGEST_MATCH_DATA,
+            cls.INGEST_PEOPLE_AND_NAMES,
+            cls.BUILD_SILVER_MATCH_DATA,
+            cls.BUILD_SILVER_PEOPLE_AND_NAMES,
+            cls.PARSE_BRONZE_MATCH_DATA,
             cls.RUN_GOLD_DBT,
             cls.RUN_QUALITY,
             cls.REFRESH_SERVING,

@@ -8,7 +8,7 @@ tracking:
   registry_uri: ""                    # defaults to tracking_uri if empty
 
 artifacts:
-  root: "s3://mlflow-artifacts/"
+  root: "s3://cricket-ml-models/"
   # Credentials for MinIO artifact store are injected from StorageSettings
 
 experiments:

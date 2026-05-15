@@ -60,61 +60,24 @@ MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-60}"
 
 # ---------------------------------------------------------------------------
 # Bucket and prefix definitions
-# Mirrors the medallion layer structure from HLD section 8.
+#
+# Three buckets total — named by purpose, not by tech:
+#   cricket-source-files  → raw downloads (match_data, people_and_names)
+#   cricket-lakehouse     → all Iceberg tables (bronze/silver/gold namespaces)
+#   cricket-ml-models     → MLflow run artifacts + trained models
 # ---------------------------------------------------------------------------
 
-# Core data lake buckets
 BUCKETS=(
-    "cricket-landing"       # Raw zips + extracted source files
-    "cricket-bronze"        # Minimally processed, append-only Iceberg tables
-    "cricket-silver"        # Normalised, identity-resolved Iceberg tables
-    "cricket-gold"          # dbt-managed star schema marts
-    "iceberg-warehouse"     # Iceberg REST catalog warehouse root
-    "mlflow-artifacts"      # MLflow model artifacts, plots, and run files
+    "cricket-source-files"  # Raw downloads from cricsheet.org (zips, csvs, jsons)
+    "cricket-lakehouse"     # All Iceberg tables (bronze/silver/gold layers)
+    "cricket-ml-models"     # MLflow artifacts, trained models, plots
 )
 
-# Landing zone prefixes — logical "folders" inside cricket-landing
-LANDING_PREFIXES=(
-    "cricket-landing/raw_zips/.keep"
-    "cricket-landing/extracted_json/.keep"
-    "cricket-landing/register_csv/.keep"
-)
-
-# Bronze prefixes — one per Bronze Iceberg table namespace
-BRONZE_PREFIXES=(
-    "cricket-bronze/match_documents/.keep"
-    "cricket-bronze/register_people/.keep"
-    "cricket-bronze/register_identifiers/.keep"
-    "cricket-bronze/register_name_variations/.keep"
-)
-
-# Silver prefixes
-SILVER_PREFIXES=(
-    "cricket-silver/matches/.keep"
-    "cricket-silver/innings/.keep"
-    "cricket-silver/deliveries/.keep"
-    "cricket-silver/wickets/.keep"
-    "cricket-silver/teams/.keep"
-    "cricket-silver/venues/.keep"
-    "cricket-silver/competitions/.keep"
-    "cricket-silver/persons/.keep"
-    "cricket-silver/person_identifiers/.keep"
-    "cricket-silver/match_players/.keep"
-    "cricket-silver/match_officials/.keep"
-)
-
-# Gold prefixes
-GOLD_PREFIXES=(
-    "cricket-gold/dim_player/.keep"
-    "cricket-gold/dim_match/.keep"
-    "cricket-gold/dim_team/.keep"
-    "cricket-gold/dim_venue/.keep"
-    "cricket-gold/dim_competition/.keep"
-    "cricket-gold/dim_date/.keep"
-    "cricket-gold/fact_delivery/.keep"
-    "cricket-gold/fact_innings/.keep"
-    "cricket-gold/fact_match_result/.keep"
-    "cricket-gold/fact_player_match/.keep"
+# Source-file prefixes — logical "folders" inside cricket-source-files
+SOURCE_FILE_PREFIXES=(
+    "cricket-source-files/match_data/zip/.keep"         # all_json.zip downloads
+    "cricket-source-files/match_data/json/.keep"        # extracted match JSON files
+    "cricket-source-files/people_and_names/csv/.keep"   # people.csv + names.csv
 )
 
 # ---------------------------------------------------------------------------
@@ -189,10 +152,7 @@ create_prefixes() {
     info "Creating prefix placeholders..."
 
     local all_prefixes=(
-        "${LANDING_PREFIXES[@]}"
-        "${BRONZE_PREFIXES[@]}"
-        "${SILVER_PREFIXES[@]}"
-        "${GOLD_PREFIXES[@]}"
+        "${SOURCE_FILE_PREFIXES[@]}"
     )
 
     for prefix in "${all_prefixes[@]}"; do
@@ -212,16 +172,16 @@ create_prefixes() {
 configure_versioning() {
     info "Configuring bucket versioning..."
 
-    if ! ${MC_CMD} version enable "${MINIO_ALIAS}/cricket-landing" --quiet 2>/dev/null; then
+    if ! ${MC_CMD} version enable "${MINIO_ALIAS}/cricket-source-files" --quiet 2>/dev/null; then
         warn "  Versioning not supported — MinIO is running in filesystem/single-drive mode."
         warn "  This is expected for local dev (single /data volume, no erasure coding)."
         warn "  Versioning will be enabled automatically when deployed with multiple drives."
         return 0
     fi
 
-    success "  Versioning enabled on cricket-landing (immutable raw zone)"
+    success "  Versioning enabled on cricket-source-files (immutable raw zone)"
 
-    for bucket in cricket-bronze cricket-silver cricket-gold iceberg-warehouse mlflow-artifacts; do
+    for bucket in cricket-lakehouse cricket-ml-models; do
         ${MC_CMD} version suspend "${MINIO_ALIAS}/${bucket}" --quiet
         info "  Versioning suspended on ${bucket} (Iceberg manages snapshots)"
     done

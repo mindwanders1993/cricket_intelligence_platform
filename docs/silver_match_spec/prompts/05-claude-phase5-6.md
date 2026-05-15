@@ -9,10 +9,10 @@ Big Task 5 — Phase 5 (job + DAG wiring) + Phase 6 (Silver DQ).
 
 Read first:
 - `docs/silver_match_spec/spec.md` (referenced as needed)
-- `src/cip/ingestion/jobs/ingest_cricsheet_archives.py` (job pattern for match pipeline)
-- `src/cip/ingestion/jobs/ingest_cricsheet_register.py` (job pattern for register)
-- `orchestration/airflow/dags/dag_ingest_cricsheet_archives.py` (DAG pattern)
-- `orchestration/airflow/dags/dag_build_silver_entities.py` (existing skeleton — fill this in)
+- `src/cip/ingestion/jobs/ingest_all_match_data.py` (job pattern for match pipeline)
+- `src/cip/ingestion/jobs/ingest_people_and_names.py` (job pattern for register)
+- `orchestration/airflow/dags/dag_ingest_all_match_data.py` (DAG pattern)
+- `orchestration/airflow/dags/dag_build_silver_match_data.py` (existing skeleton — fill this in)
 - `src/cip/quality/checks/match_bronze_dq.py` (DQ pattern to follow)
 - `src/cip/quality/checks/register_dq.py` (DQResult / DQRunSummary / persistence helpers)
 - `infra/bootstrap/init-metastore.sql` (control schema DDL — needs a new table)
@@ -69,10 +69,10 @@ Also add `task_run_dq` callable (delegates to MatchSilverDQChecker — Phase 6 b
 CLI entrypoint with argparse: `--task [phase1|phase2|phase3|identity|dq|all]`,
 `--snapshot-date`, `--force`.
 
-## Phase 5.3 — DAG: fill in `orchestration/airflow/dags/dag_build_silver_entities.py`
+## Phase 5.3 — DAG: fill in `orchestration/airflow/dags/dag_build_silver_match_data.py`
 
-dag_id: `dag_build_silver_entities` (from DagNames.BUILD_SILVER)
-schedule: triggered by `ExternalTaskSensor` watching `dag_ingest_cricsheet_archives`
+dag_id: `dag_build_silver_match_data` (from DagNames.BUILD_SILVER)
+schedule: triggered by `ExternalTaskSensor` watching `dag_ingest_all_match_data`
   task `run_dq` success, OR manual trigger. For now, use manual schedule (None).
 catchup: False
 max_active_runs: 1
@@ -80,7 +80,7 @@ max_active_runs: 1
 Task graph:
 ```
 check_infra
-    └─► wait_for_archive_dq          (ExternalTaskSensor on dag_ingest_cricsheet_archives.run_dq)
+    └─► wait_for_archive_dq          (ExternalTaskSensor on dag_ingest_all_match_data.run_dq)
           └─► phase1_lookups
                 └─► phase2_facts
                       └─► phase3_participants
@@ -92,7 +92,7 @@ check_infra
 `check_infra` verifies MinIO, PostgreSQL, Iceberg REST connectivity, and that
 `cricket.bronze.match_documents` exists for the snapshot_date.
 
-Use the same Jinja-template pattern from dag_ingest_cricsheet_archives.py for
+Use the same Jinja-template pattern from dag_ingest_all_match_data.py for
 snapshot_date, pipeline_run_id, force.
 
 Execution timeouts:

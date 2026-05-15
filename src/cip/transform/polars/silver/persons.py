@@ -8,9 +8,9 @@ from cip.common.logging import get_logger
 
 logger = get_logger(__name__)
 
-_BRONZE_PEOPLE = TableName.bronze("register_people")
-_BRONZE_IDENTIFIERS = TableName.bronze("register_identifiers")
-_BRONZE_NAME_VARIATIONS = TableName.bronze("register_name_variations")
+_BRONZE_PEOPLE = TableName.bronze("people")
+_BRONZE_IDENTIFIERS = TableName.bronze("people_identifiers")
+_BRONZE_NAME_VARIATIONS = TableName.bronze("name_variations")
 
 _SILVER_PERSONS = TableName.silver("persons")
 _SILVER_PERSON_IDENTIFIERS = TableName.silver("person_identifiers")
@@ -28,7 +28,7 @@ class SilverRegisterResult:
         return self.persons_rows + self.person_identifiers_rows + self.name_variations_rows
 
 
-class PolarsRegisterSilverTransform:
+class PolarsPeopleAndNamesSilverTransform:
     """
     Promotes the three Bronze Register tables to Silver using Polars + PyIceberg.
 
@@ -58,7 +58,7 @@ class PolarsRegisterSilverTransform:
         self._writer = writer
 
     @classmethod
-    def from_settings(cls) -> "PolarsRegisterSilverTransform":
+    def from_settings(cls) -> "PolarsPeopleAndNamesSilverTransform":
         from cip.transform.shared.readers import PolarsIcebergReader
         from cip.transform.shared.writers import PolarsIcebergWriter
 
@@ -66,7 +66,7 @@ class PolarsRegisterSilverTransform:
 
     def run_all(self, snapshot_date: str, pipeline_run_id: str) -> SilverRegisterResult:
         logger.info(
-            "PolarsRegisterSilverTransform.run_all started",
+            "PolarsPeopleAndNamesSilverTransform.run_all started",
             extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id},
         )
 
@@ -80,7 +80,7 @@ class PolarsRegisterSilverTransform:
             name_variations_rows=name_var_rows,
         )
         logger.info(
-            "PolarsRegisterSilverTransform.run_all complete",
+            "PolarsPeopleAndNamesSilverTransform.run_all complete",
             extra={
                 "snapshot_date": snapshot_date,
                 "persons_rows": persons_rows,

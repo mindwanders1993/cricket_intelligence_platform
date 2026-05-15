@@ -45,7 +45,7 @@ s3:
 iceberg:
   catalog_name: "cricket"
   rest_uri: "http://localhost:8181"
-  warehouse: "s3://iceberg-warehouse/"
+  warehouse: "s3://cricket-lakehouse/"
 
 logging:
   level: "WARN"                       # suppress Spark INFO noise in dev

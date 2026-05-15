@@ -1,8 +1,8 @@
-# src/cip/transform/polars/bronze/register_loader.py
+# src/cip/transform/polars/bronze/people_and_names_loader.py
 #
 # Bronze loader for the Cricsheet Register pipeline.
 #
-# Wires ParsedRegister (three Polars LazyFrames from parse.py) to
+# Wires ParsedPeopleAndNames (three Polars LazyFrames from parse.py) to
 # PolarsIcebergWriter, which handles catalog connection, table creation,
 # metadata injection, and PyArrow write.
 #
@@ -17,16 +17,16 @@
 #   loader.overwrite_snapshot() instead of loader.load().
 #
 # Table targets (catalog: cricket, namespace: bronze):
-#   cricket.bronze.register_people          ← ParsedRegister.persons
-#   cricket.bronze.register_identifiers     ← ParsedRegister.person_identifiers
-#   cricket.bronze.register_name_variations ← ParsedRegister.name_variations
+#   bronze.people          ← ParsedPeopleAndNames.persons
+#   bronze.people_identifiers     ← ParsedPeopleAndNames.person_identifiers
+#   bronze.name_variations ← ParsedPeopleAndNames.name_variations
 #
 # Called by:
-#   orchestration/airflow/dags/dag_ingest_cricsheet_register.py
+#   orchestration/airflow/dags/dag_ingest_people_and_names.py
 #
 # Usage:
-#   from cip.transform.polars.bronze.register_loader import RegisterLoader
-#   result = RegisterLoader.from_settings().load(parsed)
+#   from cip.transform.polars.bronze.people_and_names_loader import PeopleAndNamesLoader
+#   result = PeopleAndNamesLoader.from_settings().load(parsed)
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from cip.common.contracts.enums import Layer
 from cip.common.contracts.naming import META, TableName
 from cip.common.logging import get_logger
-from cip.ingestion.register.parse import ParsedRegister
+from cip.ingestion.people_and_names.parse import ParsedPeopleAndNames
 from cip.transform.shared.writers import PolarsIcebergWriter
 
 logger = get_logger(__name__)
@@ -46,9 +46,9 @@ logger = get_logger(__name__)
 # These use the BRONZE_TABLES registry in TableName — any typo raises ValueError
 # at import time, not at runtime.
 # ---------------------------------------------------------------------------
-TABLE_PERSONS = TableName.bronze("register_people")
-TABLE_PERSON_IDENTIFIERS = TableName.bronze("register_identifiers")
-TABLE_NAME_VARIATIONS = TableName.bronze("register_name_variations")
+TABLE_PERSONS = TableName.bronze("people")
+TABLE_PERSON_IDENTIFIERS = TableName.bronze("people_identifiers")
+TABLE_NAME_VARIATIONS = TableName.bronze("name_variations")
 
 # Partition column — must match IcebergProperties and the DAG's delete filter
 PARTITION_COL = META.SNAPSHOT_DATE  # "_snapshot_date"
@@ -62,12 +62,12 @@ PARTITION_COL = META.SNAPSHOT_DATE  # "_snapshot_date"
 @dataclass
 class LoadResult:
     """
-    Returned by RegisterLoader.load() or overwrite_snapshot().
+    Returned by PeopleAndNamesLoader.load() or overwrite_snapshot().
 
     Attributes:
-        persons_rows:        Rows written to cricket.bronze.register_people
-        identifiers_rows:    Rows written to cricket.bronze.register_identifiers
-        name_variations_rows: Rows written to cricket.bronze.register_name_variations
+        persons_rows:        Rows written to bronze.people
+        identifiers_rows:    Rows written to bronze.people_identifiers
+        name_variations_rows: Rows written to bronze.name_variations
         snapshot_date:       The _snapshot_date partition that was written
         pipeline_run_id:     The Airflow / test run ID passed in
         duration_seconds:    Wall-clock time for all three writes
@@ -93,13 +93,13 @@ class LoadResult:
 
 
 # ===========================================================================
-# RegisterLoader
+# PeopleAndNamesLoader
 # ===========================================================================
 
 
-class RegisterLoader:
+class PeopleAndNamesLoader:
     """
-    Writes a ParsedRegister to Bronze Iceberg tables.
+    Writes a ParsedPeopleAndNames to Bronze Iceberg tables.
 
     Delegates all catalog/PyArrow/schema work to PolarsIcebergWriter
     from transform.shared.writers — this class only handles:
@@ -117,7 +117,7 @@ class RegisterLoader:
         self._writer = writer or PolarsIcebergWriter.from_settings()
 
     @classmethod
-    def from_settings(cls) -> "RegisterLoader":
+    def from_settings(cls) -> "PeopleAndNamesLoader":
         """Build loader using platform settings (MinIO + Iceberg REST catalog)."""
         return cls(writer=PolarsIcebergWriter.from_settings())
 
@@ -125,7 +125,7 @@ class RegisterLoader:
     # Public API
     # -----------------------------------------------------------------------
 
-    def load(self, parsed: ParsedRegister) -> LoadResult:
+    def load(self, parsed: ParsedPeopleAndNames) -> LoadResult:
         """
         Write all three Bronze Register tables.
 
@@ -134,13 +134,13 @@ class RegisterLoader:
         use overwrite_snapshot() instead.
 
         Args:
-            parsed: Output of RegisterParser.parse()
+            parsed: Output of PeopleAndNamesParser.parse()
 
         Returns:
             LoadResult with row counts and timing
         """
         logger.info(
-            "RegisterLoader.load() starting",
+            "PeopleAndNamesLoader.load() starting",
             extra={
                 "snapshot_date": parsed.snapshot_date,
                 "pipeline_run_id": parsed.pipeline_run_id,
@@ -182,7 +182,7 @@ class RegisterLoader:
         )
 
         logger.info(
-            "RegisterLoader.load() complete",
+            "PeopleAndNamesLoader.load() complete",
             extra={
                 "total_rows": result.total_rows,
                 "persons": persons_rows,
@@ -194,7 +194,7 @@ class RegisterLoader:
 
         return result
 
-    def overwrite_snapshot(self, parsed: ParsedRegister) -> LoadResult:
+    def overwrite_snapshot(self, parsed: ParsedPeopleAndNames) -> LoadResult:
         """
         Idempotent re-run: delete the _snapshot_date partition then append.
 
@@ -206,13 +206,13 @@ class RegisterLoader:
         never a partial state.
 
         Args:
-            parsed: Output of RegisterParser.parse()
+            parsed: Output of PeopleAndNamesParser.parse()
 
         Returns:
             LoadResult with row counts and timing
         """
         logger.info(
-            "RegisterLoader.overwrite_snapshot() — deleting partition before write",
+            "PeopleAndNamesLoader.overwrite_snapshot() — deleting partition before write",
             extra={
                 "snapshot_date": parsed.snapshot_date,
                 "pipeline_run_id": parsed.pipeline_run_id,
@@ -231,7 +231,7 @@ class RegisterLoader:
         self,
         lf,
         table: str,
-        parsed: ParsedRegister,
+        parsed: ParsedPeopleAndNames,
         source_file: str,
     ) -> int:
         """

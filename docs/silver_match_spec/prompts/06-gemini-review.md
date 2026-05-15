@@ -12,7 +12,7 @@ After Phases 1-6 are implemented, open `gemini` at the project root and paste:
 @src/cip/quality/checks/match_bronze_dq.py
 @src/cip/quality/checks/register_dq.py
 @src/cip/ingestion/jobs/build_match_silver.py
-@orchestration/airflow/dags/dag_build_silver_entities.py
+@orchestration/airflow/dags/dag_build_silver_match_data.py
 @src/cip/common/contracts/naming.py
 @tests/unit/transform/spark/silver/
 @tests/unit/quality/test_match_silver_dq.py
@@ -73,10 +73,10 @@ In `identity_resolution.py`:
 - 4 phases + DQ task all present in `build_match_silver.py`
 - Idempotency check against `control.silver_match_build_log` before each phase
 - Each phase logs RUNNING → SUCCESS/FAILED row with rows_written and duration_ms
-- DAG `dag_build_silver_entities`: task graph matches `check_infra → 
+- DAG `dag_build_silver_match_data`: task graph matches `check_infra → 
   wait_for_archive_dq → phase1_lookups → phase2_facts → phase3_participants → 
   resolve_identity → run_dq → done`
-- `ExternalTaskSensor` on `dag_ingest_cricsheet_archives.run_dq`
+- `ExternalTaskSensor` on `dag_ingest_all_match_data.run_dq`
 
 ## 7. Spark-specific gotchas
 

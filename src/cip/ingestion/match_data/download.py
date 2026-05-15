@@ -1,4 +1,4 @@
-# src/cip/ingestion/cricsheet/download.py
+# src/cip/ingestion/match_data/download.py
 #
 # Downloads the Cricsheet all-matches ZIP archive to the MinIO landing zone
 # and records the attempt in control.archive_download_log.
@@ -8,7 +8,7 @@
 #   unless force=True.
 #
 # Usage:
-#   downloader = ArchiveDownloader.from_settings()
+#   downloader = MatchDataDownloader.from_settings()
 #   record = downloader.download(snapshot_date="2026-05-01", pipeline_run_id="run-xyz")
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cip.common.logging import get_logger
-from cip.ingestion.cricsheet.checksum import sha256_file
+from cip.ingestion.match_data.checksum import sha256_file
 from cip.ingestion.io.minio import MinIOClient
 
 logger = get_logger(__name__)
@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 _ARCHIVE_URL = "https://cricsheet.org/downloads/all_json.zip"
 _ARCHIVE_FILE = "all_json.zip"
 _MIN_EXPECTED_BYTES = 10 * 1024 * 1024  # 10 MB
-_DAG_ID = "dag_ingest_cricsheet_archives"
+_DAG_ID = "dag_ingest_match_data"
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,7 @@ class DownloadRecord:
     status: str
 
 
-class ArchiveDownloader:
+class MatchDataDownloader:
     """
     Downloads the Cricsheet all-matches ZIP and lands it in MinIO.
 
@@ -57,7 +57,7 @@ class ArchiveDownloader:
         self._pg_dsn = pg_dsn
 
     @classmethod
-    def from_settings(cls) -> "ArchiveDownloader":
+    def from_settings(cls) -> "MatchDataDownloader":
         from cip.common.settings import get_settings
 
         cfg = get_settings()
@@ -125,9 +125,9 @@ class ArchiveDownloader:
                     },
                 )
 
-                upload_result = self._minio.upload_to_landing(
+                upload_result = self._minio.upload_to_source_files(
                     local_path=local_path,
-                    prefix="raw_zips",
+                    prefix="match_data/zip",
                     snapshot_date=snapshot_date,
                 )
 

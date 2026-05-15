@@ -1,6 +1,6 @@
 # tests/unit/ingestion/register/test_normalize.py
 """
-Unit tests for RegisterNormalizer.
+Unit tests for PeopleAndNamesNormalizer.
 All MinIO I/O is mocked — no network or Docker required.
 """
 
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import polars as pl
 import pytest
 
-from cip.ingestion.register.normalize import NormalizedRegister, RegisterNormalizer
+from cip.ingestion.people_and_names.normalize import NormalizedPeopleAndNames, PeopleAndNamesNormalizer
 
 # ---------------------------------------------------------------------------
 # Fixtures — minimal valid CSVs matching Cricsheet Register schema
@@ -35,7 +35,7 @@ p001,Virat Kohli,kohli-virat,male,1988-11-05,253802
 
 
 def _make_normalizer(people_bytes=PEOPLE_CSV, names_bytes=NAMES_CSV):
-    """Return a RegisterNormalizer with a mocked MinIOClient."""
+    """Return a PeopleAndNamesNormalizer with a mocked MinIOClient."""
     mock_minio = MagicMock()
 
     def read_side_effect(object_key: str) -> bytes:
@@ -46,7 +46,7 @@ def _make_normalizer(people_bytes=PEOPLE_CSV, names_bytes=NAMES_CSV):
         return b""
 
     mock_minio.read_object.side_effect = read_side_effect
-    return RegisterNormalizer(minio_client=mock_minio)
+    return PeopleAndNamesNormalizer(minio_client=mock_minio)
 
 
 # ---------------------------------------------------------------------------
@@ -54,10 +54,10 @@ def _make_normalizer(people_bytes=PEOPLE_CSV, names_bytes=NAMES_CSV):
 # ---------------------------------------------------------------------------
 
 
-class TestNormalizedRegisterStructure:
+class TestNormalizedPeopleAndNamesStructure:
     def test_returns_normalized_register_dataclass(self):
         result = _make_normalizer().run("2026-05-11", "run-001")
-        assert isinstance(result, NormalizedRegister)
+        assert isinstance(result, NormalizedPeopleAndNames)
 
     def test_people_and_names_are_lazy_frames(self):
         result = _make_normalizer().run("2026-05-11", "run-001")
@@ -164,14 +164,14 @@ class TestErrorHandling:
     def test_raises_file_not_found_when_landing_is_empty(self):
         mock_minio = MagicMock()
         mock_minio.read_object.return_value = b""
-        normalizer = RegisterNormalizer(minio_client=mock_minio)
+        normalizer = PeopleAndNamesNormalizer(minio_client=mock_minio)
         with pytest.raises(FileNotFoundError, match="Landing object not found"):
             normalizer.run("2026-05-11", "run-001")
 
     def test_raises_value_error_on_empty_csv(self):
         mock_minio = MagicMock()
         mock_minio.read_object.return_value = b"identifier,name\n"  # header only, no rows
-        normalizer = RegisterNormalizer(minio_client=mock_minio)
+        normalizer = PeopleAndNamesNormalizer(minio_client=mock_minio)
         with pytest.raises(ValueError, match="empty DataFrame"):
             normalizer.run("2026-05-11", "run-001")
 
@@ -185,7 +185,7 @@ class TestErrorHandling:
             return b""  # names missing
 
         mock_minio.read_object.side_effect = side_effect
-        normalizer = RegisterNormalizer(minio_client=mock_minio)
+        normalizer = PeopleAndNamesNormalizer(minio_client=mock_minio)
         with pytest.raises(FileNotFoundError):
             normalizer.run("2026-05-11", "run-001")
 
@@ -211,5 +211,5 @@ class TestSchemaDriftResilience:
 
 class TestLandingObjectKey:
     def test_object_key_format(self):
-        key = RegisterNormalizer.landing_object_key("people.csv", "2026-05-11")
-        assert key == "register_csv/snapshot_date=2026-05-11/people.csv"
+        key = PeopleAndNamesNormalizer.landing_object_key("people.csv", "2026-05-11")
+        assert key == "people_and_names/csv/snapshot_date=2026-05-11/people.csv"

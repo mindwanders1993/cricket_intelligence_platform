@@ -1,6 +1,6 @@
 # tests/unit/ingestion/cricsheet/test_extract.py
 #
-# Unit tests for ArchiveExtractor.
+# Unit tests for MatchDataExtractor.
 #
 # Creates an in-memory ZIP containing:
 #   - 2 JSON files (should be extracted)
@@ -32,9 +32,9 @@ def _make_fake_zip(json_names: list[str], extra_names: list[str] | None = None) 
 
 
 def _make_extractor(minio_mock):
-    from cip.ingestion.cricsheet.extract import ArchiveExtractor
+    from cip.ingestion.match_data.extract import MatchDataExtractor
 
-    return ArchiveExtractor(minio=minio_mock, pg_dsn="postgresql://user:pass@host/db")
+    return MatchDataExtractor(minio=minio_mock, pg_dsn="postgresql://user:pass@host/db")
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ def _make_extractor(minio_mock):
 
 class TestExtractionManifest:
     def test_round_trip_json(self):
-        from cip.ingestion.cricsheet.manifest import ExtractionManifest, ManifestEntry
+        from cip.ingestion.match_data.manifest import ExtractionManifest, ManifestEntry
 
         entries = [
             ManifestEntry(file_name="12345.json", size_bytes=500, checksum_sha256="aaa"),
@@ -67,7 +67,7 @@ class TestExtractionManifest:
         assert loaded.entries[1].checksum_sha256 == "bbb"
 
     def test_from_json_bytes(self):
-        from cip.ingestion.cricsheet.manifest import ExtractionManifest
+        from cip.ingestion.match_data.manifest import ExtractionManifest
 
         raw = b'{"snapshot_date": "2026-01-01", "archive_file": "all_json.zip", "file_count": 0, "entries": []}'
         manifest = ExtractionManifest.from_json(raw)
@@ -75,15 +75,15 @@ class TestExtractionManifest:
         assert manifest.entries == []
 
     def test_manifest_object_key(self):
-        from cip.ingestion.cricsheet.manifest import manifest_object_key
+        from cip.ingestion.match_data.manifest import manifest_object_key
 
         key = manifest_object_key("2026-05-01")
-        assert key == "extracted_json/snapshot_date=2026-05-01/_manifest.json"
+        assert key == "match_data/json/snapshot_date=2026-05-01/_manifest.json"
 
 
 class TestWriteReadManifest:
     def test_write_manifest_calls_upload_bytes(self):
-        from cip.ingestion.cricsheet.manifest import ExtractionManifest, write_manifest
+        from cip.ingestion.match_data.manifest import ExtractionManifest, write_manifest
 
         minio = MagicMock()
         minio.upload_bytes.return_value = MagicMock()
@@ -96,18 +96,18 @@ class TestWriteReadManifest:
         )
 
         with patch("cip.common.settings.get_settings") as mock_cfg:
-            mock_cfg.return_value.storage.bucket_landing = "cricket-landing"
+            mock_cfg.return_value.storage.bucket_source_files = "cricket-source-files"
             write_manifest(minio, manifest)
 
         minio.upload_bytes.assert_called_once()
         call_kwargs = minio.upload_bytes.call_args.kwargs
-        assert call_kwargs["bucket"] == "cricket-landing"
+        assert call_kwargs["bucket"] == "cricket-source-files"
         assert "_manifest.json" in call_kwargs["key"]
         assert call_kwargs["content_type"] == "application/json"
 
 
 # ---------------------------------------------------------------------------
-# Tests: ArchiveExtractor._extract_and_upload
+# Tests: MatchDataExtractor._extract_and_upload
 # ---------------------------------------------------------------------------
 
 
@@ -127,17 +127,14 @@ class TestExtractAndUpload:
         entries, failed = extractor._extract_and_upload(
             local_zip=zip_path,
             snapshot_date=_SNAPSHOT,
-            landing_bucket="cricket-landing",
+            source_files_bucket="cricket-source-files",
         )
 
         assert len(entries) == 2
         assert len(failed) == 0
         assert minio.upload_bytes.call_count == 2
 
-        uploaded_names = {
-            call_args.kwargs["key"].split("/")[-1]
-            for call_args in minio.upload_bytes.call_args_list
-        }
+        uploaded_names = {call_args.kwargs["key"].split("/")[-1] for call_args in minio.upload_bytes.call_args_list}
         assert uploaded_names == {"match_a.json", "match_b.json"}
 
     def test_failed_upload_counted_separately(self, tmp_path):
@@ -160,7 +157,7 @@ class TestExtractAndUpload:
         entries, failed = extractor._extract_and_upload(
             local_zip=zip_path,
             snapshot_date=_SNAPSHOT,
-            landing_bucket="cricket-landing",
+            source_files_bucket="cricket-source-files",
         )
 
         assert len(entries) == 1
@@ -181,7 +178,7 @@ class TestExtractAndUpload:
         entries, _ = extractor._extract_and_upload(
             local_zip=zip_path,
             snapshot_date=_SNAPSHOT,
-            landing_bucket="cricket-landing",
+            source_files_bucket="cricket-source-files",
         )
 
         assert len(entries) == 1
@@ -190,22 +187,22 @@ class TestExtractAndUpload:
 
 
 # ---------------------------------------------------------------------------
-# Tests: ArchiveExtractor.extract (idempotency)
+# Tests: MatchDataExtractor.extract (idempotency)
 # ---------------------------------------------------------------------------
 
 
-class TestArchiveExtractorIdempotency:
+class TestMatchDataExtractorIdempotency:
     def test_skips_if_already_extracted(self):
         minio = MagicMock()
         extractor = _make_extractor(minio)
 
-        existing_path = f"s3://cricket-landing/extracted_json/snapshot_date={_SNAPSHOT}/"
+        existing_path = f"s3://cricket-source-files/match_data/json/snapshot_date={_SNAPSHOT}/"
 
         with (
             patch.object(extractor, "_check_idempotency", return_value=existing_path),
             patch.object(extractor, "_read_existing_manifest") as mock_manifest,
         ):
-            from cip.ingestion.cricsheet.manifest import ExtractionManifest
+            from cip.ingestion.match_data.manifest import ExtractionManifest
 
             mock_manifest.return_value = ExtractionManifest(
                 snapshot_date=_SNAPSHOT,
@@ -227,15 +224,17 @@ class TestArchiveExtractorIdempotency:
         minio = MagicMock()
         extractor = _make_extractor(minio)
 
-        existing_path = f"s3://cricket-landing/extracted_json/snapshot_date={_SNAPSHOT}/"
+        existing_path = f"s3://cricket-source-files/match_data/json/snapshot_date={_SNAPSHOT}/"
 
         with (
             patch.object(extractor, "_check_idempotency", return_value=existing_path),
             patch.object(extractor, "_get_log_id", return_value=10),
             patch.object(extractor, "_update_log_extracted"),
             patch.object(extractor, "_extract_and_upload", return_value=([], [])),
-            patch("cip.ingestion.cricsheet.extract.write_manifest"),
-            patch.object(extractor, "_get_storage_cfg", return_value=MagicMock(bucket_landing="cricket-landing")),
+            patch("cip.ingestion.match_data.extract.write_manifest"),
+            patch.object(
+                extractor, "_get_storage_cfg", return_value=MagicMock(bucket_source_files="cricket-source-files")
+            ),
         ):
             extractor.extract(
                 snapshot_date=_SNAPSHOT,

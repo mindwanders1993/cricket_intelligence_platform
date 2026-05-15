@@ -255,10 +255,10 @@ graph LR
         CTRL[(PostgreSQL control schema)]
     end
 
-    subgraph Landing
-        L1[landing/raw_zips]
-        L2[landing/extracted_json]
-        L3[landing/register_csv]
+    subgraph SourceFiles[cricket-source-files]
+        L1[match_data/zip]
+        L2[match_data/json]
+        L3[people_and_names/csv]
     end
 
     subgraph Bronze[Bronze — Iceberg append-only]
@@ -472,14 +472,15 @@ kubectl create clusterrolebinding spark-role \
 
 ## 9. Medallion data flow strategy
 
-### 9.1 Landing zone
+### 9.1 Source files bucket
 
-The landing zone stores original archives and extracted raw files exactly as obtained from Cricsheet. It is the first durable boundary and the reprocessing fallback point.
+The `cricket-source-files` bucket stores original archives and extracted raw files exactly as obtained from Cricsheet. It is the first durable boundary and the reprocessing fallback point.
 
-**Suggested paths:**
-- `s3://cricket-platform/landing/raw_zips/`
-- `s3://cricket-platform/landing/extracted_json/`
-- `s3://cricket-platform/landing/register_csv/`
+**Paths:**
+- `s3://cricket-source-files/match_data/zip/snapshot_date=.../all_json.zip`
+- `s3://cricket-source-files/match_data/json/snapshot_date=.../{match_id}.json`
+- `s3://cricket-source-files/people_and_names/csv/snapshot_date=.../people.csv`
+- `s3://cricket-source-files/people_and_names/csv/snapshot_date=.../names.csv`
 
 ### 9.2 Bronze layer
 

@@ -1,6 +1,6 @@
 # tests/unit/ingestion/cricsheet/test_download.py
 #
-# Unit tests for ArchiveDownloader.
+# Unit tests for MatchDataDownloader.
 #
 # All tests mock: MinIOClient, psycopg2, and urllib.request.urlretrieve
 # so no real network or database access occurs.
@@ -21,7 +21,7 @@ _SNAPSHOT = "2026-05-01"
 _RUN_ID = "test-run-001"
 _ARCHIVE_FILE = "all_json.zip"
 _ARCHIVE_URL = "https://cricsheet.org/downloads/all_json.zip"
-_LANDING_PATH = f"s3://cricket-landing/raw_zips/snapshot_date={_SNAPSHOT}/{_ARCHIVE_FILE}"
+_LANDING_PATH = f"s3://cricket-source-files/match_data/zip/snapshot_date={_SNAPSHOT}/{_ARCHIVE_FILE}"
 
 
 def _fake_upload_result(s3_path: str = _LANDING_PATH):
@@ -31,9 +31,9 @@ def _fake_upload_result(s3_path: str = _LANDING_PATH):
 
 
 def _make_downloader(minio_mock, pg_dsn: str = "postgresql://user:pass@host/db"):
-    from cip.ingestion.cricsheet.download import ArchiveDownloader
+    from cip.ingestion.match_data.download import MatchDataDownloader
 
-    return ArchiveDownloader(minio=minio_mock, pg_dsn=pg_dsn)
+    return MatchDataDownloader(minio=minio_mock, pg_dsn=pg_dsn)
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ def _make_downloader(minio_mock, pg_dsn: str = "postgresql://user:pass@host/db")
 
 class TestChecksumUtils:
     def test_sha256_bytes_deterministic(self):
-        from cip.ingestion.cricsheet.checksum import sha256_bytes
+        from cip.ingestion.match_data.checksum import sha256_bytes
 
         data = b"hello world"
         h1 = sha256_bytes(data)
@@ -51,7 +51,7 @@ class TestChecksumUtils:
         assert h1 == h2
 
     def test_sha256_bytes_known_value(self):
-        from cip.ingestion.cricsheet.checksum import sha256_bytes
+        from cip.ingestion.match_data.checksum import sha256_bytes
         import hashlib
 
         data = b"cricsheet"
@@ -59,7 +59,7 @@ class TestChecksumUtils:
         assert sha256_bytes(data) == expected
 
     def test_sha256_file(self, tmp_path):
-        from cip.ingestion.cricsheet.checksum import sha256_file
+        from cip.ingestion.match_data.checksum import sha256_file
         import hashlib
 
         content = b"match_data" * 1000
@@ -71,7 +71,7 @@ class TestChecksumUtils:
         assert sha256_file(str(p)) == expected
 
     def test_sha256_file_large_chunks(self, tmp_path):
-        from cip.ingestion.cricsheet.checksum import sha256_file
+        from cip.ingestion.match_data.checksum import sha256_file
         import hashlib
 
         content = b"x" * (1 << 17)  # 128 KB — spans multiple chunks
@@ -81,11 +81,11 @@ class TestChecksumUtils:
 
 
 # ---------------------------------------------------------------------------
-# Tests: ArchiveDownloader
+# Tests: MatchDataDownloader
 # ---------------------------------------------------------------------------
 
 
-class TestArchiveDownloaderIdempotency:
+class TestMatchDataDownloaderIdempotency:
     """Downloader skips when a SUCCESS row already exists."""
 
     def test_skips_if_already_downloaded(self):
@@ -105,11 +105,11 @@ class TestArchiveDownloaderIdempotency:
             )
 
         assert result is existing_record
-        minio.upload_to_landing.assert_not_called()
+        minio.upload_to_source_files.assert_not_called()
 
     def test_force_bypasses_idempotency(self, tmp_path):
         minio = MagicMock()
-        minio.upload_to_landing.return_value = _fake_upload_result()
+        minio.upload_to_source_files.return_value = _fake_upload_result()
         downloader = _make_downloader(minio)
 
         existing = MagicMock()
@@ -121,7 +121,7 @@ class TestArchiveDownloaderIdempotency:
             patch.object(downloader, "_check_idempotency", return_value=existing),
             patch.object(downloader, "_insert_log_row", return_value=99),
             patch.object(downloader, "_update_log_success") as mock_success,
-            patch("cip.ingestion.cricsheet.download.sha256_file", return_value="abc123"),
+            patch("cip.ingestion.match_data.download.sha256_file", return_value="abc123"),
             patch(
                 "urllib.request.urlretrieve",
                 side_effect=lambda url, dest: Path(dest).write_bytes(zip_content),
@@ -143,16 +143,16 @@ class TestArchiveDownloaderIdempotency:
                 force=True,
             )
 
-        minio.upload_to_landing.assert_called_once()
+        minio.upload_to_source_files.assert_called_once()
         assert result.status == "SUCCESS"
 
 
-class TestArchiveDownloaderSuccess:
+class TestMatchDataDownloaderSuccess:
     """Happy-path download."""
 
     def test_download_creates_success_record(self, tmp_path):
         minio = MagicMock()
-        minio.upload_to_landing.return_value = _fake_upload_result()
+        minio.upload_to_source_files.return_value = _fake_upload_result()
         downloader = _make_downloader(minio)
 
         zip_content = b"PK\x03\x04" + b"Z" * (20 * 1024 * 1024)  # 20 MB
@@ -161,7 +161,7 @@ class TestArchiveDownloaderSuccess:
             patch.object(downloader, "_check_idempotency", return_value=None),
             patch.object(downloader, "_insert_log_row", return_value=7),
             patch.object(downloader, "_update_log_success") as mock_success,
-            patch("cip.ingestion.cricsheet.download.sha256_file", return_value="deadbeef"),
+            patch("cip.ingestion.match_data.download.sha256_file", return_value="deadbeef"),
             patch(
                 "urllib.request.urlretrieve",
                 side_effect=lambda url, dest: Path(dest).write_bytes(zip_content),
@@ -186,14 +186,14 @@ class TestArchiveDownloaderSuccess:
         assert result.status == "SUCCESS"
         assert result.checksum_sha256 == "deadbeef"
         assert result.id == 7
-        assert minio.upload_to_landing.call_count == 1
-        call_kwargs = minio.upload_to_landing.call_args.kwargs
-        assert call_kwargs["prefix"] == "raw_zips"
+        assert minio.upload_to_source_files.call_count == 1
+        call_kwargs = minio.upload_to_source_files.call_args.kwargs
+        assert call_kwargs["prefix"] == "match_data/zip"
         assert call_kwargs["snapshot_date"] == _SNAPSHOT
 
-    def test_upload_uses_raw_zips_prefix(self, tmp_path):
+    def test_upload_uses_match_data_zip_prefix(self, tmp_path):
         minio = MagicMock()
-        minio.upload_to_landing.return_value = _fake_upload_result()
+        minio.upload_to_source_files.return_value = _fake_upload_result()
         downloader = _make_downloader(minio)
 
         zip_content = b"PK\x03\x04" + b"A" * (12 * 1024 * 1024)
@@ -202,7 +202,7 @@ class TestArchiveDownloaderSuccess:
             patch.object(downloader, "_check_idempotency", return_value=None),
             patch.object(downloader, "_insert_log_row", return_value=1),
             patch.object(downloader, "_update_log_success") as mock_success,
-            patch("cip.ingestion.cricsheet.download.sha256_file", return_value="aabbcc"),
+            patch("cip.ingestion.match_data.download.sha256_file", return_value="aabbcc"),
             patch(
                 "urllib.request.urlretrieve",
                 side_effect=lambda url, dest: Path(dest).write_bytes(zip_content),
@@ -211,12 +211,12 @@ class TestArchiveDownloaderSuccess:
             mock_success.return_value = MagicMock(status="SUCCESS")
             downloader.download(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
 
-        _call = minio.upload_to_landing.call_args
-        assert _call.kwargs["prefix"] == "raw_zips"
+        _call = minio.upload_to_source_files.call_args
+        assert _call.kwargs["prefix"] == "match_data/zip"
         assert _call.kwargs["snapshot_date"] == _SNAPSHOT
 
 
-class TestArchiveDownloaderFailures:
+class TestMatchDataDownloaderFailures:
     """Error handling."""
 
     def test_too_small_raises_value_error(self, tmp_path):

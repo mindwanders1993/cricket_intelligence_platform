@@ -19,6 +19,16 @@ x-common-env: &common-env
   MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
   MINIO_S3_ENDPOINT: ${MINIO_S3_ENDPOINT:-http://minio:9000}
   ICEBERG_REST_URI: ${ICEBERG_REST_URI:-http://iceberg-rest:8181}
+  # Spark driver heap for Silver pipelines running inside Airflow workers.
+  # 4g is required to parse + persist Bronze raw_json (~1 GB) before
+  # MEMORY_AND_DISK spillover engages. 2g causes JVM OOM mid-parse.
+  SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-4g}
+  SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-4g}
+  # local[2] (not local[*]) for the dev VM: with 10 cores all reading Bronze
+  # Parquet partitions in parallel, each task tries to decompress ~500 MB of
+  # raw_json into the shared 4 GB heap and OOMs. Two concurrent tasks ≈ 2 GB
+  # working memory each, which fits.
+  SPARK_MASTER: ${SPARK_MASTER:-local[2]}
 
 x-restart-policy: &restart-policy
   restart: unless-stopped
@@ -27,7 +37,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Object Storage — MinIO (S3-compatible)
-  # Hosts landing, bronze, silver, gold prefixes as bucket paths.
+  # Hosts three buckets: cricket-source-files, cricket-lakehouse, cricket-ml-models.
   # ---------------------------------------------------------------------------
   minio:
     image: quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
@@ -91,7 +101,7 @@ services:
       CATALOG_URI: jdbc:postgresql://${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB}
       CATALOG_JDBC_USER: ${POSTGRES_USER}
       CATALOG_JDBC_PASSWORD: ${POSTGRES_PASSWORD}
-      CATALOG_WAREHOUSE: s3://${ICEBERG_WAREHOUSE_BUCKET:-iceberg-warehouse}/
+      CATALOG_WAREHOUSE: s3://${ICEBERG_LAKEHOUSE_BUCKET:-cricket-lakehouse}/
       CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
       CATALOG_S3_ENDPOINT: http://${MINIO_HOST:-minio}:9000
       CATALOG_S3_PATH__STYLE__ACCESS: "true"

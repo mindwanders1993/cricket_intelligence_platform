@@ -12,7 +12,7 @@
 # Usage:
 #   from cip.common.logging import get_logger, bind_context
 #
-#   bind_context(pipeline_name="ingest_cricsheet_archives", dag_run_id="run_123")
+#   bind_context(pipeline_name="ingest_match_data", dag_run_id="run_123")
 #   logger = get_logger(__name__)
 #   logger.info("Download started", extra={"source_url": url, "file_size": size})
 
@@ -53,7 +53,7 @@ def bind_context(
 
     Example:
         bind_context(
-            pipeline_name="ingest_cricsheet_archives",
+            pipeline_name="ingest_match_data",
             dag_run_id="scheduled__2024-11-01T00:00:00+00:00",
             run_id=str(uuid4()),
             layer="landing",
@@ -248,6 +248,7 @@ def _install_root_handler(log_level: str, use_json: bool) -> None:
         return
 
     import os
+
     if os.environ.get("AIRFLOW_CTX_DAG_ID"):
         # Do not override root handlers when running inside an Airflow task,
         # as it causes an infinite recursion loop via sys.stdout interception.
@@ -332,7 +333,7 @@ class LogContext:
     and restores the previous values on exit.
 
     Usage:
-        with LogContext(pipeline_name="ingest_cricsheet_archives", layer="landing"):
+        with LogContext(pipeline_name="ingest_match_data", layer="landing"):
             logger.info("Inside task — correlation fields are set automatically")
         # Previous context restored here
     """

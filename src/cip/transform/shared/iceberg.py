@@ -219,7 +219,7 @@ class IcebergCatalogManager:
     def list_tables(self, layer: Layer) -> list[str]:
         """
         List all tables in a namespace.
-        Returns FQNs: ["cricket.bronze.match_documents", ...]
+        Returns FQNs: ["bronze.match_data", ...]
         """
         namespace = str(layer)
         try:
@@ -320,8 +320,8 @@ class IcebergCatalogManager:
 
         Example:
             change_type = mgr.register_schema_version(
-                fqn=TableName.bronze("match_documents"),
-                fields=mgr.get_current_schema(TableName.bronze("match_documents")),
+                fqn=TableName.bronze("match_data"),
+                fields=mgr.get_current_schema(TableName.bronze("match_data")),
                 pipeline_name="parse_bronze_match_documents",
             )
             if change_type == SchemaChangeType.DROP_COLUMN:
@@ -449,7 +449,7 @@ class IcebergCatalogManager:
             {"expired": N} dict for logging
 
         Example:
-            mgr.expire_snapshots(TableName.bronze("match_documents"), retain_last=5)
+            mgr.expire_snapshots(TableName.bronze("match_data"), retain_last=5)
         """
         from datetime import timedelta
 

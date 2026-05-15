@@ -74,33 +74,37 @@ class StorageSettings(BaseSettings):
     use_ssl: bool = Field(default=False)
 
     # Bucket names — align with create-buckets.sh
-    bucket_landing: str = Field(default="cricket-landing")
-    bucket_bronze: str = Field(default="cricket-bronze")
-    bucket_silver: str = Field(default="cricket-silver")
-    bucket_gold: str = Field(default="cricket-gold")
-    bucket_iceberg: str = Field(default="iceberg-warehouse")
-    bucket_mlflow: str = Field(default="mlflow-artifacts")
+    # Three buckets only:
+    #   cricket-source-files  → raw downloads (ZIPs, CSVs, JSONs) from cricsheet.org
+    #   cricket-lakehouse     → all Iceberg tables (bronze/silver/gold namespaces)
+    #   cricket-ml-models     → MLflow artifacts + trained models
+    bucket_source_files: str = Field(default="cricket-source-files")
+    bucket_lakehouse: str = Field(default="cricket-lakehouse")
+    bucket_ml_models: str = Field(default="cricket-ml-models")
 
-    # Landing prefixes
-    prefix_raw_zips: str = Field(default="raw_zips")
-    prefix_extracted_json: str = Field(default="extracted_json")
-    prefix_register_csv: str = Field(default="register_csv")
-
-    @property
-    def landing_raw_zips(self) -> str:
-        return f"s3://{self.bucket_landing}/{self.prefix_raw_zips}"
-
-    @property
-    def landing_extracted_json(self) -> str:
-        return f"s3://{self.bucket_landing}/{self.prefix_extracted_json}"
+    # Source-file prefixes (folders inside cricket-source-files)
+    #   match_data/zip/        → all_json.zip and future incremental zips
+    #   match_data/json/       → extracted match JSON files
+    #   people_and_names/csv/  → people.csv + names.csv
+    prefix_match_data_zip: str = Field(default="match_data/zip")
+    prefix_match_data_json: str = Field(default="match_data/json")
+    prefix_people_and_names_csv: str = Field(default="people_and_names/csv")
 
     @property
-    def landing_register_csv(self) -> str:
-        return f"s3://{self.bucket_landing}/{self.prefix_register_csv}"
+    def source_match_data_zip(self) -> str:
+        return f"s3://{self.bucket_source_files}/{self.prefix_match_data_zip}"
 
     @property
-    def iceberg_warehouse_uri(self) -> str:
-        return f"s3://{self.bucket_iceberg}/"
+    def source_match_data_json(self) -> str:
+        return f"s3://{self.bucket_source_files}/{self.prefix_match_data_json}"
+
+    @property
+    def source_people_and_names_csv(self) -> str:
+        return f"s3://{self.bucket_source_files}/{self.prefix_people_and_names_csv}"
+
+    @property
+    def lakehouse_uri(self) -> str:
+        return f"s3://{self.bucket_lakehouse}/"
 
 
 class IcebergSettings(BaseSettings):
@@ -113,15 +117,15 @@ class IcebergSettings(BaseSettings):
     )
 
     rest_uri: str = Field(default="http://iceberg-rest:8181")
-    warehouse_bucket: str = Field(default="iceberg-warehouse")
+    lakehouse_bucket: str = Field(default="cricket-lakehouse")
     catalog_name: str = Field(default="cricket")
     namespace_bronze: str = Field(default="bronze")
     namespace_silver: str = Field(default="silver")
     namespace_gold: str = Field(default="gold")
 
     @property
-    def warehouse_path(self) -> str:
-        return f"s3://{self.warehouse_bucket}/"
+    def lakehouse_uri(self) -> str:
+        return f"s3://{self.lakehouse_bucket}/"
 
 
 class PostgresSettings(BaseSettings):
@@ -180,9 +184,19 @@ class SparkSettings(BaseSettings):
 
     master: str = Field(default="local[*]")
     app_name_prefix: str = Field(default="cricket-platform")
-    driver_memory: str = Field(default="2g")
-    executor_memory: str = Field(default="2g")
+    # Driver memory bumped to 4g — parsing the full Bronze match_documents
+    # snapshot (~22k rows × ~50KB raw_json each) needs more than the pyspark
+    # default 1g and the previous 2g. Override via SPARK_DRIVER_MEMORY env if
+    # you need more for backfills (e.g. "8g").
+    driver_memory: str = Field(default="4g")
+    executor_memory: str = Field(default="4g")
     executor_cores: int = Field(default=2)
+    # Cap each Parquet scan task at 32 MB compressed so a single task never
+    # decompresses more than ~150 MB of raw_json into the JVM heap.
+    max_partition_bytes: int = Field(default=33_554_432)  # 32 MB
+    # Default 200 is excessive for our 21k-row Match Silver dedup; 50 keeps
+    # shuffle coordination overhead low while staying well above driver cores.
+    shuffle_partitions: int = Field(default=50)
     iceberg_version: str = Field(default="1.5.0")
     hadoop_aws_version: str = Field(default="3.3.4")
     aws_java_sdk_version: str = Field(default="1.12.262")
@@ -247,7 +261,7 @@ class MLflowSettings(BaseSettings):
 
     tracking_uri: str = Field(default="http://mlflow:5001")
     experiment_prefix: str = Field(default="cricket-platform")
-    artifact_root: str = Field(default="s3://mlflow-artifacts/")
+    artifact_root: str = Field(default="s3://cricket-ml-models/")
     registry_uri: str = Field(default="")
 
     @model_validator(mode="after")
@@ -386,7 +400,7 @@ def get_settings() -> PlatformSettings:
         cfg = get_settings()
         print(cfg.storage.endpoint)         # http://localhost:9000
         print(cfg.postgres.dsn)             # postgresql+psycopg2://...
-        print(cfg.storage.landing_raw_zips) # s3://cricket-landing/raw_zips
+        print(cfg.storage.source_match_data_zip) # s3://cricket-source-files/match_data/zip
     """
     return PlatformSettings()
 

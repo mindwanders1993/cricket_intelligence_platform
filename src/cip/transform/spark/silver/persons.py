@@ -14,9 +14,9 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Bronze source tables
-_BRONZE_PEOPLE = TableName.bronze("register_people")
-_BRONZE_IDENTIFIERS = TableName.bronze("register_identifiers")
-_BRONZE_NAME_VARIATIONS = TableName.bronze("register_name_variations")
+_BRONZE_PEOPLE = TableName.bronze("people")
+_BRONZE_IDENTIFIERS = TableName.bronze("people_identifiers")
+_BRONZE_NAME_VARIATIONS = TableName.bronze("name_variations")
 
 # Silver target tables
 _SILVER_PERSONS = TableName.silver("persons")
@@ -35,7 +35,7 @@ class SilverRegisterResult:
         return self.persons_rows + self.person_identifiers_rows + self.name_variations_rows
 
 
-class RegisterSilverTransform:
+class PeopleAndNamesSilverTransform:
     """
     Promotes the three Bronze Register tables to Silver.
 
@@ -69,7 +69,7 @@ class RegisterSilverTransform:
         self._writer = writer
 
     @classmethod
-    def from_spark(cls, spark: "SparkSession") -> "RegisterSilverTransform":
+    def from_spark(cls, spark: "SparkSession") -> "PeopleAndNamesSilverTransform":
         from cip.transform.shared.writers import SparkIcebergWriter
 
         return cls(spark=spark, writer=SparkIcebergWriter.from_spark(spark))
@@ -91,7 +91,7 @@ class RegisterSilverTransform:
             SilverRegisterResult with row counts per table.
         """
         logger.info(
-            "RegisterSilverTransform.run_all started",
+            "PeopleAndNamesSilverTransform.run_all started",
             extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id},
         )
 
@@ -105,7 +105,7 @@ class RegisterSilverTransform:
             name_variations_rows=name_var_rows,
         )
         logger.info(
-            "RegisterSilverTransform.run_all complete",
+            "PeopleAndNamesSilverTransform.run_all complete",
             extra={
                 "snapshot_date": snapshot_date,
                 "persons_rows": persons_rows,

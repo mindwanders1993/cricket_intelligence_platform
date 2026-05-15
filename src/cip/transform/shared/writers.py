@@ -234,7 +234,7 @@ class PolarsIcebergWriter:
         Example:
             writer.append(
                 df=parsed_df,
-                fqn=TableName.bronze("match_documents"),
+                fqn=TableName.bronze("match_data"),
                 snapshot_date="2024-11-01",
                 source_file="all_matches.zip",
             )
@@ -384,7 +384,7 @@ class PolarsIcebergWriter:
         iceberg_schema = assign_fresh_schema_ids(temp_schema)
 
         logger.info("Creating Iceberg table", extra={"table": fqn, "partition_cols": partition_cols or []})
-        _catalog_name, namespace, _table_name = TableName.from_fqn(fqn)
+        namespace, _table_name = TableName.from_fqn(fqn)
         try:
             self._catalog.create_namespace_if_not_exists(namespace)
         except Exception:

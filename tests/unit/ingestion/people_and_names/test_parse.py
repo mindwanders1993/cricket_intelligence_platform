@@ -1,5 +1,5 @@
 # tests/unit/ingestion/register/test_parse.py
-"""Unit tests for RegisterParser."""
+"""Unit tests for PeopleAndNamesParser."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ from datetime import datetime, timezone
 
 import polars as pl
 
-from cip.ingestion.register.normalize import NormalizedRegister
+from cip.ingestion.people_and_names.normalize import NormalizedPeopleAndNames
 
 
 class TestParseFromDfs:
-    """parse_from_dfs() must produce identical output to parse(NormalizedRegister)."""
+    """parse_from_dfs() must produce identical output to parse(NormalizedPeopleAndNames)."""
 
     @staticmethod
     def _make_people_df() -> pl.DataFrame:
@@ -42,8 +42,8 @@ class TestParseFromDfs:
         )
 
     @staticmethod
-    def _make_normalized(people_df: pl.DataFrame, names_df: pl.DataFrame) -> NormalizedRegister:
-        return NormalizedRegister(
+    def _make_normalized(people_df: pl.DataFrame, names_df: pl.DataFrame) -> NormalizedPeopleAndNames:
+        return NormalizedPeopleAndNames(
             people=people_df.lazy(),
             names=names_df.lazy(),
             snapshot_date="2026-05-11",
@@ -52,14 +52,14 @@ class TestParseFromDfs:
         )
 
     def test_parse_from_dfs_matches_parse(self):
-        from cip.ingestion.register.parse import RegisterParser
+        from cip.ingestion.people_and_names.parse import PeopleAndNamesParser
 
         people_df = self._make_people_df()
         names_df = self._make_names_df()
         normalized = self._make_normalized(people_df, names_df)
 
-        result_a = RegisterParser.parse(normalized)
-        result_b = RegisterParser.parse_from_dfs(
+        result_a = PeopleAndNamesParser.parse(normalized)
+        result_b = PeopleAndNamesParser.parse_from_dfs(
             people_df=people_df,
             names_df=names_df,
             snapshot_date="2026-05-11",
@@ -71,20 +71,20 @@ class TestParseFromDfs:
         assert result_a.name_variations.collect().height == result_b.name_variations.collect().height
 
     def test_parse_from_dfs_returns_parsed_register(self):
-        from cip.ingestion.register.parse import ParsedRegister, RegisterParser
+        from cip.ingestion.people_and_names.parse import ParsedPeopleAndNames, PeopleAndNamesParser
 
-        result = RegisterParser.parse_from_dfs(
+        result = PeopleAndNamesParser.parse_from_dfs(
             people_df=self._make_people_df(),
             names_df=self._make_names_df(),
             snapshot_date="2026-05-11",
             pipeline_run_id="test-run-001",
         )
-        assert isinstance(result, ParsedRegister)
+        assert isinstance(result, ParsedPeopleAndNames)
 
     def test_parse_from_dfs_preserves_snapshot_date(self):
-        from cip.ingestion.register.parse import RegisterParser
+        from cip.ingestion.people_and_names.parse import PeopleAndNamesParser
 
-        result = RegisterParser.parse_from_dfs(
+        result = PeopleAndNamesParser.parse_from_dfs(
             people_df=self._make_people_df(),
             names_df=self._make_names_df(),
             snapshot_date="2026-05-11",
@@ -93,9 +93,9 @@ class TestParseFromDfs:
         assert result.snapshot_date == "2026-05-11"
 
     def test_parse_from_dfs_preserves_pipeline_run_id(self):
-        from cip.ingestion.register.parse import RegisterParser
+        from cip.ingestion.people_and_names.parse import PeopleAndNamesParser
 
-        result = RegisterParser.parse_from_dfs(
+        result = PeopleAndNamesParser.parse_from_dfs(
             people_df=self._make_people_df(),
             names_df=self._make_names_df(),
             snapshot_date="2026-05-11",

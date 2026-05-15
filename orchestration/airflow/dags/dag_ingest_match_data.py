@@ -1,6 +1,6 @@
-# orchestration/airflow/dags/dag_ingest_cricsheet_archives.py
+# orchestration/airflow/dags/dag_ingest_match_data.py
 #
-# DAG: dag_ingest_cricsheet_archives
+# DAG: dag_ingest_match_data
 #
 # Purpose:
 #   Cricsheet match archive pipeline: Download all_json.zip → Extract JSONs
@@ -24,10 +24,10 @@
 #   - All tasks: pass {"force": true} in dag_run.conf to bypass.
 #
 # Manual trigger examples:
-#   airflow dags trigger dag_ingest_cricsheet_archives \
+#   airflow dags trigger dag_ingest_match_data \
 #     --conf '{"snapshot_date": "2026-05-01"}'
 #
-#   airflow dags trigger dag_ingest_cricsheet_archives \
+#   airflow dags trigger dag_ingest_match_data \
 #     --conf '{"snapshot_date": "2026-04-01", "force": true}'
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from cip.ingestion.jobs.ingest_cricsheet_archives import (
+from cip.ingestion.jobs.ingest_match_data import (
     task_download_archive,
     task_extract_archive,
     task_load_bronze,
@@ -121,7 +121,7 @@ def _check_infra(**context) -> None:
 # ---------------------------------------------------------------------------
 
 with DAG(
-    dag_id="dag_ingest_cricsheet_archives",
+    dag_id="dag_ingest_match_data",
     description=(
         "Cricsheet match archive pipeline: Download all_json.zip " "→ Extract JSONs → Bronze Iceberg → DQ checks"
     ),
@@ -132,10 +132,10 @@ with DAG(
     default_args=_DEFAULT_ARGS,
     tags=["ingestion", "archive", "bronze", "dq", "cricsheet"],
     doc_md="""
-## dag_ingest_cricsheet_archives
+## dag_ingest_match_data
 
 Downloads `all_json.zip` from [cricsheet.org](https://cricsheet.org/downloads/all_json.zip)
-and writes all match JSON documents to `cricket.bronze.match_documents`.
+and writes all match JSON documents to `bronze.match_data`.
 
 ### Task graph
 
@@ -152,7 +152,7 @@ check_infra
 
 | Iceberg table | Source | Key columns |
 |---|---|---|
-| `cricket.bronze.match_documents` | `all_json.zip` JSON files | `match_id, revision` |
+| `bronze.match_data` | `all_json.zip` JSON files | `match_id, revision` |
 
 ### Idempotency
 
@@ -171,11 +171,11 @@ Each monthly run appends rows with `revision = MAX(existing revision) + 1` per
 
 ```bash
 # Normal monthly run
-airflow dags trigger dag_ingest_cricsheet_archives \\
+airflow dags trigger dag_ingest_match_data \\
   --conf '{"snapshot_date": "2026-05-01"}'
 
 # Force re-run for a historical snapshot
-airflow dags trigger dag_ingest_cricsheet_archives \\
+airflow dags trigger dag_ingest_match_data \\
   --conf '{"snapshot_date": "2026-04-01", "force": true}'
 ```
 
@@ -184,7 +184,7 @@ airflow dags trigger dag_ingest_cricsheet_archives \\
 - Download log: `SELECT * FROM control.archive_download_log ORDER BY id DESC LIMIT 10;`
 - Bronze load log: `SELECT * FROM control.bronze_match_ingestion_log ORDER BY id DESC LIMIT 10;`
 - DQ results:
-  `SELECT * FROM control.dq_results WHERE dag_id = 'dag_ingest_cricsheet_archives' ORDER BY checked_at DESC;`
+  `SELECT * FROM control.dq_results WHERE dag_id = 'dag_ingest_match_data' ORDER BY checked_at DESC;`
 """,
 ) as dag:
     # ── Task 1: Infrastructure gate ─────────────────────────────────────────
@@ -210,7 +210,7 @@ airflow dags trigger dag_ingest_cricsheet_archives \\
         execution_timeout=timedelta(minutes=30),
         doc_md=(
             "Downloads all_json.zip from cricsheet.org → SHA-256 checksum → "
-            "MinIO landing zone (raw_zips/snapshot_date=.../all_json.zip) → "
+            "MinIO cricket-source-files bucket (match_data/zip/snapshot_date=.../all_json.zip) → "
             "control.archive_download_log."
         ),
     )
@@ -227,7 +227,7 @@ airflow dags trigger dag_ingest_cricsheet_archives \\
         execution_timeout=timedelta(hours=1),
         doc_md=(
             "Downloads ZIP from MinIO, extracts ~21k JSON files, "
-            "uploads each to extracted_json/snapshot_date=.../ with 20-worker pool, "
+            "uploads each to match_data/json/snapshot_date=.../ with 20-worker pool, "
             "writes _manifest.json for downstream verification."
         ),
     )
@@ -243,10 +243,10 @@ airflow dags trigger dag_ingest_cricsheet_archives \\
         },
         execution_timeout=timedelta(hours=2),
         doc_md=(
-            "Reads JSON files from MinIO extracted_json prefix (20-worker pool), "
+            "Reads JSON files from MinIO match_data/json prefix (20-worker pool), "
             "parses match header fields (match_type, gender, season, teams, venue), "
             "attaches revision numbers (MAX existing + 1 per match_id), "
-            "writes all-string rows to cricket.bronze.match_documents."
+            "writes all-string rows to bronze.match_data."
         ),
     )
 

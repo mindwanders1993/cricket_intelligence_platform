@@ -1,9 +1,9 @@
 from cip.quality.checks.match_bronze_dq import MatchBronzeDQChecker
-from cip.quality.checks.register_dq import (
+from cip.quality.checks.people_and_names_dq import (
     DQBlockingFailureError,
     DQCheckResult,
     DQRunSummary,
-    RegisterDQChecker,
+    PeopleAndNamesDQChecker,
 )
 
 __all__ = [
@@ -11,5 +11,5 @@ __all__ = [
     "DQCheckResult",
     "DQRunSummary",
     "MatchBronzeDQChecker",
-    "RegisterDQChecker",
+    "PeopleAndNamesDQChecker",
 ]

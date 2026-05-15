@@ -1,4 +1,4 @@
-# src/cip/ingestion/register/normalize.py
+# src/cip/ingestion/people_and_names/normalize.py
 #
 # Normalizer for Cricsheet Register CSV files read from the MinIO landing zone.
 #
@@ -10,15 +10,15 @@
 #       _ingested_at      — UTC timestamp of this Bronze load run
 #       _pipeline_run_id  — Airflow run_id for lineage
 #       _row_hash         — SHA-256 of all value columns (row-level dedup key)
-#   - Return NormalizedRegister(people=LazyFrame, names=LazyFrame)
+#   - Return NormalizedPeopleAndNames(people=LazyFrame, names=LazyFrame)
 #   - No writes — caller (bronze writer) decides what to do with the frames
 #
 # Called by:
-#   src/cip/transform/polars/bronze/register_loader.py
+#   src/cip/transform/polars/bronze/people_and_names_loader.py
 #
 # Usage:
-#   from cip.ingestion.register.normalize import RegisterNormalizer
-#   normalizer = RegisterNormalizer.from_settings()
+#   from cip.ingestion.people_and_names.normalize import PeopleAndNamesNormalizer
+#   normalizer = PeopleAndNamesNormalizer.from_settings()
 #   result = normalizer.run(snapshot_date="2026-05-11", pipeline_run_id="run-001")
 #   result.people.collect()   # polars.DataFrame
 
@@ -42,8 +42,8 @@ logger = get_logger(__name__)
 _PEOPLE_FILE = "people.csv"
 _NAMES_FILE = "names.csv"
 
-# Landing prefix — must match StorageSettings.prefix_register_csv
-_LANDING_PREFIX = "register_csv"
+# Source-file prefix — must match StorageSettings.prefix_people_and_names_csv
+_SOURCE_FILE_PREFIX = "people_and_names/csv"
 
 
 # ===========================================================================
@@ -52,9 +52,9 @@ _LANDING_PREFIX = "register_csv"
 
 
 @dataclass
-class NormalizedRegister:
+class NormalizedPeopleAndNames:
     """
-    Output of RegisterNormalizer.run().
+    Output of PeopleAndNamesNormalizer.run().
     Both frames are LazyFrames — call .collect() only when writing.
     """
 
@@ -74,17 +74,17 @@ class NormalizedRegister:
 
 
 # ===========================================================================
-# RegisterNormalizer
+# PeopleAndNamesNormalizer
 # ===========================================================================
 
 
-class RegisterNormalizer:
+class PeopleAndNamesNormalizer:
     """
     Reads Register CSVs from MinIO landing zone and normalizes them
     into all-string Polars LazyFrames with system metadata columns.
 
     Instantiation:
-        normalizer = RegisterNormalizer.from_settings()
+        normalizer = PeopleAndNamesNormalizer.from_settings()
 
     Usage:
         result = normalizer.run(snapshot_date="2026-05-11", pipeline_run_id="run-001")
@@ -95,7 +95,7 @@ class RegisterNormalizer:
         self._minio = minio_client
 
     @classmethod
-    def from_settings(cls) -> "RegisterNormalizer":
+    def from_settings(cls) -> "PeopleAndNamesNormalizer":
         return cls(minio_client=MinIOClient.from_settings())
 
     # -----------------------------------------------------------------------
@@ -106,17 +106,17 @@ class RegisterNormalizer:
         self,
         snapshot_date: str,
         pipeline_run_id: str,
-    ) -> NormalizedRegister:
+    ) -> NormalizedPeopleAndNames:
         """
         Read both Register CSVs for a given snapshot_date from landing,
-        attach metadata columns, return NormalizedRegister.
+        attach metadata columns, return NormalizedPeopleAndNames.
 
         Args:
             snapshot_date:   ISO date string (YYYY-MM-DD) — matches landing partition.
             pipeline_run_id: Airflow run_id or manual identifier for lineage.
 
         Returns:
-            NormalizedRegister with .people and .names as LazyFrames.
+            NormalizedPeopleAndNames with .people and .names as LazyFrames.
 
         Raises:
             FileNotFoundError: If either CSV is absent in the landing zone.
@@ -155,7 +155,7 @@ class RegisterNormalizer:
             },
         )
 
-        return NormalizedRegister(
+        return NormalizedPeopleAndNames(
             people=people_lf,
             names=names_lf,
             snapshot_date=snapshot_date,
@@ -178,7 +178,7 @@ class RegisterNormalizer:
         Download one CSV from MinIO landing, parse all-string, add metadata columns.
         Returns a LazyFrame — no data is materialized until .collect() is called.
         """
-        object_key = f"{_LANDING_PREFIX}/snapshot_date={snapshot_date}/{source_file}"
+        object_key = f"{_SOURCE_FILE_PREFIX}/snapshot_date={snapshot_date}/{source_file}"
 
         logger.info(
             "Reading from landing",
@@ -288,4 +288,4 @@ class RegisterNormalizer:
     @staticmethod
     def landing_object_key(source_file: str, snapshot_date: str) -> str:
         """Return the MinIO object key for a given file and snapshot date."""
-        return f"{_LANDING_PREFIX}/snapshot_date={snapshot_date}/{source_file}"
+        return f"{_SOURCE_FILE_PREFIX}/snapshot_date={snapshot_date}/{source_file}"

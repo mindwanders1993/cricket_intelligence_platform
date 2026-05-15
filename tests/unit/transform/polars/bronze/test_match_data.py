@@ -19,7 +19,7 @@ _RUN_ID = "test-run-bronze"
 
 
 def _make_loader(minio=None, writer=None, pg_dsn="postgresql://u:p@h/db"):
-    from cip.transform.polars.bronze.match_documents import MatchBronzeLoader
+    from cip.transform.polars.bronze.match_data import MatchBronzeLoader
 
     return MatchBronzeLoader(
         minio=minio or MagicMock(),
@@ -60,7 +60,7 @@ def _make_match_json(
 
 class TestParseJsonFile:
     def test_basic_parse(self):
-        from cip.transform.polars.bronze.match_documents import _parse_json_file
+        from cip.transform.polars.bronze.match_data import _parse_json_file
 
         content = _make_match_json(match_id="12345")
         result = _parse_json_file("12345.json", content)
@@ -79,34 +79,34 @@ class TestParseJsonFile:
         assert len(result["raw_json"]) > 0
 
     def test_match_id_strips_json_extension(self):
-        from cip.transform.polars.bronze.match_documents import _parse_json_file
+        from cip.transform.polars.bronze.match_data import _parse_json_file
 
         result = _parse_json_file("match_99999.json", _make_match_json())
         assert result["match_id"] == "match_99999"
 
     def test_season_as_integer_coerced_to_string(self):
-        from cip.transform.polars.bronze.match_documents import _parse_json_file
+        from cip.transform.polars.bronze.match_data import _parse_json_file
 
         content = _make_match_json(season=2007)
         result = _parse_json_file("m.json", content)
         assert result["season"] == "2007"
 
     def test_season_with_slash_preserved(self):
-        from cip.transform.polars.bronze.match_documents import _parse_json_file
+        from cip.transform.polars.bronze.match_data import _parse_json_file
 
         content = _make_match_json(season="2011/12")
         result = _parse_json_file("m.json", content)
         assert result["season"] == "2011/12"
 
     def test_missing_dates_returns_empty_string(self):
-        from cip.transform.polars.bronze.match_documents import _parse_json_file
+        from cip.transform.polars.bronze.match_data import _parse_json_file
 
         content = _make_match_json(dates=[])
         result = _parse_json_file("m.json", content)
         assert result["match_date"] == ""
 
     def test_missing_teams_returns_empty_strings(self):
-        from cip.transform.polars.bronze.match_documents import _parse_json_file
+        from cip.transform.polars.bronze.match_data import _parse_json_file
 
         content = _make_match_json(teams=[])
         result = _parse_json_file("m.json", content)
@@ -114,7 +114,7 @@ class TestParseJsonFile:
         assert result["team_b"] == ""
 
     def test_single_team_fills_team_b_empty(self):
-        from cip.transform.polars.bronze.match_documents import _parse_json_file
+        from cip.transform.polars.bronze.match_data import _parse_json_file
 
         content = _make_match_json(teams=["India"])
         result = _parse_json_file("m.json", content)
@@ -122,7 +122,7 @@ class TestParseJsonFile:
         assert result["team_b"] == ""
 
     def test_null_venue_handled(self):
-        from cip.transform.polars.bronze.match_documents import _parse_json_file
+        from cip.transform.polars.bronze.match_data import _parse_json_file
 
         content = _make_match_json(venue=None, city=None)
         result = _parse_json_file("m.json", content)
@@ -130,19 +130,19 @@ class TestParseJsonFile:
         assert result["city"] == ""
 
     def test_invalid_json_returns_none(self):
-        from cip.transform.polars.bronze.match_documents import _parse_json_file
+        from cip.transform.polars.bronze.match_data import _parse_json_file
 
         result = _parse_json_file("bad.json", b"{not valid json")
         assert result is None
 
     def test_empty_bytes_returns_none(self):
-        from cip.transform.polars.bronze.match_documents import _parse_json_file
+        from cip.transform.polars.bronze.match_data import _parse_json_file
 
         result = _parse_json_file("empty.json", b"")
         assert result is None
 
     def test_revision_placeholder_is_one(self):
-        from cip.transform.polars.bronze.match_documents import _parse_json_file
+        from cip.transform.polars.bronze.match_data import _parse_json_file
 
         result = _parse_json_file("m.json", _make_match_json())
         assert result["revision"] == "1"
@@ -221,10 +221,12 @@ class TestFetchExistingRevisions:
         mock_table = MagicMock()
         loader._writer._catalog.load_table.return_value = mock_table
 
-        arrow_data = pa.table({
-            "match_id": pa.array(["m1", "m1", "m2"]),
-            "revision": pa.array(["1", "2", "1"]),
-        })
+        arrow_data = pa.table(
+            {
+                "match_id": pa.array(["m1", "m1", "m2"]),
+                "revision": pa.array(["1", "2", "1"]),
+            }
+        )
         mock_table.scan.return_value.to_arrow.return_value = arrow_data
 
         result = loader._fetch_existing_revisions()
@@ -260,7 +262,7 @@ class TestMatchBronzeLoaderIdempotency:
             patch.object(loader, "_run_load") as mock_run,
             patch.object(loader, "_update_log_success"),
         ):
-            from cip.transform.polars.bronze.match_documents import MatchLoadResult
+            from cip.transform.polars.bronze.match_data import MatchLoadResult
 
             mock_run.return_value = MatchLoadResult(
                 snapshot_date=_SNAPSHOT,
@@ -284,16 +286,27 @@ class TestMatchBronzeLoaderIdempotency:
 
 class TestBronzeSchema:
     def test_schema_all_string_types(self):
-        from cip.transform.polars.bronze.match_documents import _bronze_schema
+        from cip.transform.polars.bronze.match_data import _bronze_schema
 
         schema = _bronze_schema()
         for col_name, dtype in schema.items():
             assert dtype == pl.Utf8, f"Column {col_name!r} should be Utf8 but got {dtype}"
 
     def test_schema_has_required_columns(self):
-        from cip.transform.polars.bronze.match_documents import _bronze_schema
+        from cip.transform.polars.bronze.match_data import _bronze_schema
 
         schema = _bronze_schema()
-        required = {"match_id", "revision", "match_type", "gender", "season",
-                    "match_date", "team_a", "team_b", "venue", "city", "raw_json"}
+        required = {
+            "match_id",
+            "revision",
+            "match_type",
+            "gender",
+            "season",
+            "match_date",
+            "team_a",
+            "team_b",
+            "venue",
+            "city",
+            "raw_json",
+        }
         assert required.issubset(set(schema.keys()))

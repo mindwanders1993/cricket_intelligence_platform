@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS control.register_ingestion_log (
     checksum_sha256     TEXT,
 
     -- Landing path written to
-    landing_path        TEXT,                               -- s3://cricket-landing/register_csv/snapshot_date=.../
+    landing_path        TEXT,                               -- s3://cricket-source-files/people_and_names/csv/snapshot_date=.../
 
     -- Bronze load tracking
     bronze_loaded       BOOLEAN     NOT NULL DEFAULT FALSE,
@@ -328,10 +328,10 @@ CREATE TABLE IF NOT EXISTS control.archive_download_log (
     checksum_sha256     TEXT,
 
     -- Landing path written to MinIO
-    landing_path        TEXT,                               -- s3://cricket-landing/archive_zip/snapshot_date=.../
+    landing_path        TEXT,                               -- s3://cricket-source-files/match_data/zip/snapshot_date=.../
 
     -- Extraction tracking
-    extracted_path      TEXT,                               -- s3://cricket-landing/archive_json/snapshot_date=.../
+    extracted_path      TEXT,                               -- s3://cricket-source-files/match_data/json/snapshot_date=.../
     file_count          INTEGER,                            -- Number of JSON files extracted from ZIP
 
     -- Run status and timing

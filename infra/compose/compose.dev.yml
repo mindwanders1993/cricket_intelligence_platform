@@ -5,22 +5,17 @@
 
 services:
 
-  # Override: mount platform source code live into airflow containers
+  # Override: build a custom image with Java + PySpark, mount source live.
+  # Run `make build-airflow` (or `docker compose build`) once after pulling,
+  # then `make up` as normal. The custom image replaces _PIP_ADDITIONAL_REQUIREMENTS.
   airflow-webserver:
+    build:
+      context: ../..
+      dockerfile: infra/docker/airflow/Dockerfile
     environment:
       CIP_REPO_ROOT: /opt/airflow
       PYTHONPATH: /opt/airflow/src
-      _PIP_ADDITIONAL_REQUIREMENTS: >-
-        pydantic-settings==2.14.1
-        psycopg2-binary==2.9.12
-        httpx==0.28.1
-        boto3
-        structlog==24.4.0
-        python-dotenv==1.2.2
-        PyYAML==6.0.3
-        polars==0.20.31
-        pyarrow==24.0.0
-        pyiceberg[s3fs]==0.11.1
+      JAVA_HOME: /usr/lib/jvm/default-java
     volumes:
       - ../../orchestration/airflow/dags:/opt/airflow/dags
       - ../../orchestration/airflow/plugins:/opt/airflow/plugins
@@ -29,20 +24,13 @@ services:
       - airflow_logs:/opt/airflow/logs
 
   airflow-scheduler:
+    build:
+      context: ../..
+      dockerfile: infra/docker/airflow/Dockerfile
     environment:
       CIP_REPO_ROOT: /opt/airflow
       PYTHONPATH: /opt/airflow/src
-      _PIP_ADDITIONAL_REQUIREMENTS: >-
-        pydantic-settings==2.14.1
-        psycopg2-binary==2.9.12
-        httpx==0.28.1
-        boto3
-        structlog==24.4.0
-        python-dotenv==1.2.2
-        PyYAML==6.0.3
-        polars==0.20.31
-        pyarrow==24.0.0
-        pyiceberg[s3fs]==0.11.1
+      JAVA_HOME: /usr/lib/jvm/default-java
     volumes:
       - ../../orchestration/airflow/dags:/opt/airflow/dags
       - ../../orchestration/airflow/plugins:/opt/airflow/plugins
@@ -67,15 +55,12 @@ services:
       - |
         /usr/bin/mc alias set local http://minio:9000 \
           ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
-        /usr/bin/mc mb --ignore-existing local/cricket-landing &&
-        /usr/bin/mc mb --ignore-existing local/cricket-bronze &&
-        /usr/bin/mc mb --ignore-existing local/cricket-silver &&
-        /usr/bin/mc mb --ignore-existing local/cricket-gold &&
-        /usr/bin/mc mb --ignore-existing local/iceberg-warehouse &&
-        /usr/bin/mc mb --ignore-existing local/mlflow-artifacts &&
-        /usr/bin/mc put /dev/null local/cricket-landing/raw_zips/.keep &&
-        /usr/bin/mc put /dev/null local/cricket-landing/extracted_json/.keep &&
-        /usr/bin/mc put /dev/null local/cricket-landing/register_csv/.keep &&
+        /usr/bin/mc mb --ignore-existing local/cricket-source-files &&
+        /usr/bin/mc mb --ignore-existing local/cricket-lakehouse &&
+        /usr/bin/mc mb --ignore-existing local/cricket-ml-models &&
+        /usr/bin/mc put /dev/null local/cricket-source-files/match_data/zip/.keep &&
+        /usr/bin/mc put /dev/null local/cricket-source-files/match_data/json/.keep &&
+        /usr/bin/mc put /dev/null local/cricket-source-files/people_and_names/csv/.keep &&
         echo "✅ MinIO buckets and prefixes initialized."
     restart: on-failure
 
@@ -89,7 +74,7 @@ services:
       minio:
         condition: service_healthy
     environment:
-      MLFLOW_DEFAULT_ARTIFACT_ROOT: s3://mlflow-artifacts/
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: s3://cricket-ml-models/
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
       MLFLOW_S3_ENDPOINT_URL: http://${MINIO_HOST:-minio}:9000
@@ -97,7 +82,7 @@ services:
     command: >
       mlflow server
         --backend-store-uri sqlite:////mlflow/mlflow.db
-        --default-artifact-root s3://mlflow-artifacts/
+        --default-artifact-root s3://cricket-ml-models/
         --host 0.0.0.0
         --port 5000
     volumes:

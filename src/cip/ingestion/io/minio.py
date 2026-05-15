@@ -15,7 +15,7 @@
 # Usage:
 #   from cip.ingestion.io.minio import MinIOClient
 #   client = MinIOClient.from_settings()
-#   client.upload_file(local_path, "cricket-landing", "raw_zips/file.zip")
+#   client.upload_file(local_path, "cricket-source-files", "match_data/zip/file.zip")
 
 from __future__ import annotations
 
@@ -683,7 +683,7 @@ class MinIOClient:
     # Platform-aware convenience methods
     # -----------------------------------------------------------------------
 
-    def upload_to_landing(
+    def upload_to_source_files(
         self,
         local_path: Path | str,
         prefix: str,
@@ -691,26 +691,27 @@ class MinIOClient:
         extra_metadata: dict[str, str] | None = None,
     ) -> UploadResult:
         """
-        Upload a file to the cricket-landing bucket under the correct
+        Upload a file to the cricket-source-files bucket under the correct
         Hive-partitioned prefix. Resolves bucket from platform settings.
 
         Args:
             local_path:     Local file path
-            prefix:         Landing prefix — "raw_zips" | "extracted_json" | "register_csv"
+            prefix:         Source-file prefix — "match_data/zip" | "match_data/json" |
+                            "people_and_names/csv"
             snapshot_date:  ISO date string for Hive partition key
             extra_metadata: Optional S3 object metadata
 
         Example:
-            client.upload_to_landing(
-                Path("/tmp/all_matches.zip"),
-                prefix="raw_zips",
+            client.upload_to_source_files(
+                Path("/tmp/all_json.zip"),
+                prefix="match_data/zip",
                 snapshot_date="2024-11-01",
             )
-            # → s3://cricket-landing/raw_zips/snapshot_date=2024-11-01/all_matches.zip
+            # → s3://cricket-source-files/match_data/zip/snapshot_date=2024-11-01/all_json.zip
         """
         local_path = Path(local_path)
         cfg = get_settings().storage
-        bucket = cfg.bucket_landing
+        bucket = cfg.bucket_source_files
         key = f"{prefix}/snapshot_date={snapshot_date}/{local_path.name}"
 
         return self.upload_file(
@@ -720,40 +721,41 @@ class MinIOClient:
             extra_metadata=extra_metadata,
         )
 
-    def list_landing_json_files(self, snapshot_date: str) -> list[S3ObjectMeta]:
+    def list_match_data_json_files(self, snapshot_date: str) -> list[S3ObjectMeta]:
         """
-        List all extracted JSON files in the landing zone for a given snapshot date.
-        Used by the Bronze parse DAG to discover files for processing.
+        List all extracted match JSON files in the source-files bucket for a
+        given snapshot date. Used by the Bronze parse DAG to discover files
+        for processing.
         """
         cfg = get_settings().storage
-        prefix = f"{cfg.prefix_extracted_json}/snapshot_date={snapshot_date}/"
+        prefix = f"{cfg.prefix_match_data_json}/snapshot_date={snapshot_date}/"
         return self.list_objects(
-            bucket=cfg.bucket_landing,
+            bucket=cfg.bucket_source_files,
             prefix=prefix,
             suffix_filter=".json",
         )
 
-    def list_unprocessed_json_files(self, snapshot_date: str) -> list[S3ObjectMeta]:
+    def list_unprocessed_match_json_files(self, snapshot_date: str) -> list[S3ObjectMeta]:
         """
-        List JSON files in landing that have not yet been promoted to Bronze.
+        List match JSON files that have not yet been promoted to Bronze.
         Cross-references with file_inventory.is_processed — currently returns
         all files; the DAG task filters against the control DB.
         """
-        return self.list_landing_json_files(snapshot_date)
+        return self.list_match_data_json_files(snapshot_date)
 
     def read_object(self, object_key: str, bucket: str | None = None) -> bytes:
         """
-        Read a landing-zone object by key into memory.
+        Read a source-file object by key into memory.
 
         A platform-aware wrapper around read_bytes() that resolves the
         bucket from settings when not explicitly provided. Intended for
-        normalize.py and any other module that reads from the landing zone
-        by object key alone (without needing to know the bucket name).
+        normalize.py and any other module that reads from the source-files
+        bucket by object key alone (without needing to know the bucket name).
 
         Args:
             object_key: Full S3 key, e.g.
-                        "register_csv/snapshot_date=2026-05-11/people.csv"
-            bucket:     Override bucket. Defaults to cfg.bucket_landing.
+                        "people_and_names/csv/snapshot_date=2026-05-11/people.csv"
+            bucket:     Override bucket. Defaults to cfg.bucket_source_files.
 
         Returns:
             Raw bytes of the object.
@@ -762,7 +764,7 @@ class MinIOClient:
             ObjectNotFoundError: If the object does not exist.
         """
         cfg = get_settings().storage
-        resolved_bucket = bucket or cfg.bucket_landing
+        resolved_bucket = bucket or cfg.bucket_source_files
         return self.read_bytes(resolved_bucket, object_key)
 
     # -----------------------------------------------------------------------
@@ -786,11 +788,9 @@ class MinIOClient:
         """
         cfg = get_settings().storage
         required_buckets = [
-            cfg.bucket_landing,
-            cfg.bucket_bronze,
-            cfg.bucket_silver,
-            cfg.bucket_gold,
-            cfg.bucket_iceberg,
+            cfg.bucket_source_files,
+            cfg.bucket_lakehouse,
+            cfg.bucket_ml_models,
         ]
         missing = [b for b in required_buckets if not self.bucket_exists(b)]
         if missing:

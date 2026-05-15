@@ -11,22 +11,21 @@ minio:
   path_style: true
   use_ssl: false
 
+  # Three buckets only — named by purpose, not by tech.
   buckets:
-    landing: "cricket-landing"
-    bronze: "cricket-bronze"
-    silver: "cricket-silver"
-    gold: "cricket-gold"
-    iceberg_warehouse: "iceberg-warehouse"
-    mlflow_artifacts: "mlflow-artifacts"
+    source_files: "cricket-source-files"  # raw downloads from cricsheet.org
+    lakehouse: "cricket-lakehouse"        # all Iceberg tables (bronze/silver/gold)
+    ml_models: "cricket-ml-models"        # MLflow run artifacts + trained models
 
+  # Folders inside cricket-source-files.
   prefixes:
-    raw_zips: "raw_zips"
-    extracted_json: "extracted_json"
-    register_csv: "register_csv"
+    match_data_zip: "match_data/zip"             # all_json.zip + future incremental zips
+    match_data_json: "match_data/json"           # extracted match JSON files
+    people_and_names_csv: "people_and_names/csv" # people.csv + names.csv
 
 iceberg:
   rest_uri: "http://localhost:8181"
-  warehouse_bucket: "iceberg-warehouse"
+  lakehouse_bucket: "cricket-lakehouse"
   catalog_name: "cricket"
   namespaces:
     bronze: "bronze"
