@@ -69,7 +69,7 @@ This is a cricket data lakehouse — a **medallion architecture** (Landing → B
 
 ### Iceberg catalog
 
-Catalog name: `cricket`. Tables follow the pattern `cricket.<layer>.<entity>` (e.g. `cricket.bronze.register_people`). The REST catalog runs at `http://iceberg-rest:8181` backed by PostgreSQL + MinIO.
+Catalog name: `cricket` (REST catalog). Table FQNs are 2-segment `<layer>.<entity>` (e.g. `bronze.people`, `silver.deliveries`) — the catalog name is **not** in the FQN. MinIO physical layout is layer-first (Option A): `cricket-lakehouse/bronze/{table}/`, `cricket-lakehouse/silver/{table}/`. The REST catalog runs at `http://iceberg-rest:8181` backed by PostgreSQL + MinIO.
 
 ### Module layout (`src/cip/`)
 
@@ -83,8 +83,8 @@ common/
   logging.py         — structlog wrapper; use get_logger(__name__)
 
 ingestion/
-  cricsheet/         — ZIP download, checksum, extraction
-  register/          — people.csv + names.csv download, parse, normalize
+  match_data/        — ZIP download, checksum, extraction (Cricsheet all_matches.zip)
+  people_and_names/  — people.csv + names.csv download, parse, normalize
   io/
     minio.py         — MinIOClient with health_check(); use from_settings() factory
   jobs/              — Thin Airflow-callable wrappers (one function per DAG task)
@@ -132,7 +132,7 @@ Always use the provided builders — no raw f-string path construction:
 ```python
 from cip.common.contracts.naming import TableName, PathBuilder, META, DagNames
 
-TableName.bronze("match_documents")             # → "cricket.bronze.match_documents"
+TableName.bronze("match_data")                  # → "bronze.match_data"
 PathBuilder.landing_register_csv("people.csv", "2026-05-11")
 META.SNAPSHOT_DATE                              # → "_snapshot_date"
 ```
@@ -150,7 +150,7 @@ Every pipeline task guards against re-runs via `control.register_ingestion_log` 
 - **`SparkIcebergWriter.dynamic_overwrite()`** — standard write mode for Silver PySpark jobs (Match pipeline). Accepts optional `partition_cols`; auto-creates the table via `_ensure_table_exists()` on first run, then overwrites only the partitions present in the DataFrame.
 - Both writers call `_inject_meta_polars`/`_inject_meta_spark` to stamp mandatory `_snapshot_date`, `_ingested_at`, `_pipeline_run_id`, `_row_hash`, `_source_file`, `_source_url` columns.
 
-**Silver Register uses Polars, not PySpark.** `task_load_silver` in `ingest_people_and_names.py` instantiates `PolarsRegisterSilverTransform` (from `transform/polars/silver/persons.py`). PySpark is not required for the Register pipeline.
+**Silver Register uses Polars, not PySpark.** The People & Names Silver build (`build_silver_people_and_names.py`) instantiates `PolarsPeopleAndNamesSilverTransform` (from `transform/polars/silver/persons.py`). PySpark is not required for the People & Names pipeline.
 
 **Spark JAR packages:** `_build_spark_iceberg_conf()` in `readers.py` injects `spark.jars.packages` with the Iceberg runtime + `hadoop-aws` + `aws-java-sdk-bundle`. These are downloaded from Maven Central on first run (requires internet). Versions are controlled by `SparkSettings.iceberg_version`, `.hadoop_aws_version`, `.aws_java_sdk_version` (via env or conf/base/spark.yaml). The catalog config also sets `s3.access-key-id` / `s3.secret-access-key` directly on the Iceberg catalog (not only the Hadoop `fs.s3a.*` keys) — both are required.
 
@@ -201,7 +201,7 @@ Every Bronze and Silver Iceberg table carries: `_snapshot_date`, `_ingested_at`,
 
 - `season` field in match JSON can be a string `"2011/12"`, string `"2026"`, or integer `2007` — normalise in Silver.
 - `wickets[n].player_out` is the authoritative dismissal subject, not `batter` (they differ on run-outs).
-- `key_*` columns in `people.csv` are unpivoted to long-form in Bronze (`register_identifiers` table) — new `key_*` columns flow through automatically without code changes.
+- `key_*` columns in `people.csv` are unpivoted to long-form in Bronze (`bronze.people_identifiers` table) — new `key_*` columns flow through automatically without code changes.
 - YAML match files are intentionally skipped at Bronze; only `.json` files are processed.
 
 ## graphify
