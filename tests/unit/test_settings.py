@@ -175,12 +175,16 @@ class TestEnvVarOverridePriority:
 
 
 class TestStoragePathProperties:
-    def test_landing_register_csv_path(self):
+    def test_source_people_and_names_csv_path(self):
         cfg = s.get_settings()
-        assert cfg.storage.landing_register_csv.startswith("s3://cricket-landing/")
+        assert cfg.storage.source_people_and_names_csv.startswith("s3://cricket-source-files/")
 
-    def test_iceberg_warehouse_uri_ends_with_slash(self):
+    def test_source_match_data_zip_path(self):
         cfg = s.get_settings()
-        assert cfg.storage.iceberg_warehouse_uri.endswith(
-            "/"
-        ), "Iceberg warehouse URI must end with / for PyIceberg catalog resolution"
+        assert cfg.storage.source_match_data_zip.startswith("s3://cricket-source-files/")
+        assert "match_data/zip" in cfg.storage.source_match_data_zip
+
+    def test_lakehouse_uri_ends_with_slash(self):
+        cfg = s.get_settings()
+        assert cfg.storage.lakehouse_uri.endswith("/"), "Lakehouse URI must end with / for PyIceberg catalog resolution"
+        assert cfg.storage.lakehouse_uri == "s3://cricket-lakehouse/"

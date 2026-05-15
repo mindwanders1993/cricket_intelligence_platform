@@ -93,14 +93,14 @@
 - [x] `load()` → append-only; `overwrite_snapshot()` → delete partition then append
 
 ### Airflow DAG ✅
-- [x] `orchestration/airflow/dags/dag_ingest_cricsheet_register.py`
+- [x] `orchestration/airflow/dags/dag_ingest_people_and_names.py`
 - [x] Schedule: Sunday 00:30 UTC (06:00 IST)
 - [x] Tasks: `check_infra` → `download_and_land` → (`schema_drift_check` → `schema_drift_alert`) + `load_bronze` → `done`
 - [x] `force=True` propagation via Jinja from `dag_run.conf`
 - [x] Schema drift short-circuit branch (informational, never blocks Bronze load)
 
 ### Job entrypoint ✅
-- [x] `ingestion/jobs/ingest_cricsheet_register.py` — CLI + Airflow callable wrappers
+- [x] `ingestion/jobs/ingest_people_and_names.py` — CLI + Airflow callable wrappers
 - [x] `--task all/download/bronze/dbt` + `--force` + `--snapshot-date`
 
 ### Tests ✅ (63 unit tests, all passing)
@@ -143,7 +143,7 @@
 - [ ] Log to `control.bronze_match_ingestion_log`
 
 ### Airflow DAG ⬜
-- [ ] `dag_ingest_cricsheet_archives`
+- [ ] `dag_ingest_all_match_data`
 - [ ] Tasks: `check_infra` → `download_archive` → `extract_json` → `load_bronze` → `dq_check` → `done`
 - [ ] Skip already-processed snapshots via `control.archive_download_log`
 

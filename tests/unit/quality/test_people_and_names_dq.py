@@ -1,6 +1,6 @@
 # tests/unit/quality/test_register_dq.py
 """
-Unit tests for RegisterDQChecker.
+Unit tests for PeopleAndNamesDQChecker.
 
 PolarsIcebergReader and psycopg2 are mocked — no real Iceberg catalog or DB.
 Tests verify:
@@ -20,11 +20,11 @@ from unittest.mock import MagicMock, patch
 import polars as pl
 import pytest
 
-from cip.quality.checks.register_dq import (
+from cip.quality.checks.people_and_names_dq import (
     DQBlockingFailureError,
     DQCheckResult,
     DQRunSummary,
-    RegisterDQChecker,
+    PeopleAndNamesDQChecker,
     _pct,
 )
 
@@ -38,8 +38,8 @@ _PG_DSN = "postgresql://user:pass@localhost/test"
 # ---------------------------------------------------------------------------
 
 
-def _make_checker() -> RegisterDQChecker:
-    return RegisterDQChecker(reader=MagicMock(), pg_dsn=_PG_DSN)
+def _make_checker() -> PeopleAndNamesDQChecker:
+    return PeopleAndNamesDQChecker(reader=MagicMock(), pg_dsn=_PG_DSN)
 
 
 def _persons(ids: list[str | None]) -> pl.DataFrame:
@@ -229,7 +229,7 @@ class TestCheckRowCountThreshold:
         check_id = "REG-SLV-005" if source_file == "people.csv" else "REG-SLV-006"
         return checker._check_row_count_threshold(
             source_file=source_file,
-            bronze_fqn="cricket.bronze.register_people",
+            bronze_fqn="bronze.people",
             check_id=check_id,
             landing_rows=landing_rows,
             bronze_rows=bronze_rows,
@@ -259,7 +259,7 @@ class TestCheckRowCountThreshold:
         checker = _make_checker()
         result = checker._check_row_count_threshold(
             source_file="names.csv",
-            bronze_fqn="cricket.bronze.register_name_variations",
+            bronze_fqn="bronze.name_variations",
             check_id="REG-SLV-006",
             landing_rows=500,
             bronze_rows=500,
@@ -463,7 +463,7 @@ class TestRunAll:
 
     def _make_checker_with_mocks(self, persons_df, identifiers_df, name_var_df, landing_counts):
         reader = self._setup_reader(persons_df, identifiers_df, name_var_df)
-        checker = RegisterDQChecker(reader=reader, pg_dsn=_PG_DSN)
+        checker = PeopleAndNamesDQChecker(reader=reader, pg_dsn=_PG_DSN)
         checker._get_landing_row_counts = MagicMock(return_value=landing_counts)
         checker._persist_results = MagicMock()
         return checker
@@ -473,7 +473,9 @@ class TestRunAll:
         identifiers = _identifiers(["p001", "p002"], ["cricinfo", "espn"], ["1", "2"])
         names = _name_vars(["p001", "p002"])
         checker = self._make_checker_with_mocks(
-            persons, identifiers, names,
+            persons,
+            identifiers,
+            names,
             {"people.csv": 10, "names.csv": 10},
         )
         summary = checker.run_all(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
@@ -484,7 +486,9 @@ class TestRunAll:
         identifiers = _identifiers(["p001", "p002"], ["cricinfo", "espn"], ["1", "2"])
         names = _name_vars(["p001", "p002"])
         checker = self._make_checker_with_mocks(
-            persons, identifiers, names,
+            persons,
+            identifiers,
+            names,
             {"people.csv": 2, "names.csv": 2},
         )
         summary = checker.run_all(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
@@ -495,7 +499,9 @@ class TestRunAll:
         identifiers = _identifiers(["p001"], ["cricinfo"], ["1"])
         names = _name_vars(["p001"])
         checker = self._make_checker_with_mocks(
-            persons, identifiers, names,
+            persons,
+            identifiers,
+            names,
             {"people.csv": 1, "names.csv": 1},
         )
         checker.run_all(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
@@ -507,7 +513,9 @@ class TestRunAll:
         identifiers = _identifiers(["p001"], ["cricinfo"], ["1"])
         names = _name_vars([])
         checker = self._make_checker_with_mocks(
-            persons, identifiers, names,
+            persons,
+            identifiers,
+            names,
             {"people.csv": 1, "names.csv": 0},
         )
         with pytest.raises(DQBlockingFailureError):
@@ -521,7 +529,9 @@ class TestRunAll:
         identifiers = _identifiers(["p001", "p001"], ["cricinfo", "cricinfo"], ["1", "1"])
         names = _name_vars(["p001", "p002"])
         checker = self._make_checker_with_mocks(
-            persons, identifiers, names,
+            persons,
+            identifiers,
+            names,
             {"people.csv": 2, "names.csv": 2},
         )
         summary = checker.run_all(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
@@ -532,7 +542,9 @@ class TestRunAll:
         identifiers = _identifiers(["p001"], ["cricinfo"], ["1"])
         names = _name_vars(["p001"])
         checker = self._make_checker_with_mocks(
-            persons, identifiers, names,
+            persons,
+            identifiers,
+            names,
             {"people.csv": 1, "names.csv": 1},
         )
         summary = checker.run_all(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
@@ -558,6 +570,6 @@ class TestFromSettings:
                 return_value=MagicMock(),
             ),
         ):
-            checker = RegisterDQChecker.from_settings()
-            assert isinstance(checker, RegisterDQChecker)
+            checker = PeopleAndNamesDQChecker.from_settings()
+            assert isinstance(checker, PeopleAndNamesDQChecker)
             assert checker._pg_dsn == "postgresql://u:p@h/db"

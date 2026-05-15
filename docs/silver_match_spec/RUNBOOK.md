@@ -219,7 +219,7 @@ for tbl in ['matches', 'innings', 'deliveries', 'wickets', 'match_players']:
 
 # DQ summary
 psql ${POSTGRES_DSN:-postgresql://cricket_user:cricket_pass@localhost:5432/cricket_platform} \
-  -c "SELECT check_id, status FROM control.dq_results WHERE dag_id = 'dag_build_silver_entities' ORDER BY checked_at DESC LIMIT 20;"
+  -c "SELECT check_id, status FROM control.dq_results WHERE dag_id = 'dag_build_silver_match_data' ORDER BY checked_at DESC LIMIT 20;"
 ```
 
 ---

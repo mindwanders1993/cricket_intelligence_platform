@@ -94,7 +94,7 @@ src/cip/
 │   │   ├── download.py
 │   │   └── extract.py
 │   └── jobs/
-│       └── ingest_cricsheet_register.py   Airflow callables + CLI entrypoint
+│       └── ingest_people_and_names.py   Airflow callables + CLI entrypoint
 │
 ├── transform/
 │   ├── polars/
@@ -181,17 +181,17 @@ cricket (catalog)
 
 | DAG ID | Schedule | Status | Description |
 |--------|----------|--------|-------------|
-| `dag_ingest_cricsheet_register` | Sun 00:30 UTC | ✅ Built | Register download + Bronze load |
-| `dag_ingest_cricsheet_archives` | TBD | ⬜ Big Task 4 | Match archive download + extract + Bronze |
+| `dag_ingest_people_and_names` | Sun 00:30 UTC | ✅ Built | Register download + Bronze load |
+| `dag_ingest_all_match_data` | TBD | ⬜ Big Task 4 | Match archive download + extract + Bronze |
 | `dag_parse_bronze_match_documents` | TBD | ⬜ Big Task 4 | JSON → Bronze Iceberg |
-| `dag_build_silver_entities` | TBD | ⬜ Big Task 5 | PySpark Silver transforms |
+| `dag_build_silver_match_data` | TBD | ⬜ Big Task 5 | PySpark Silver transforms |
 | `dag_run_gold_dbt_models` | TBD | ⬜ Big Task 7 | dbt Gold layer |
 | `dag_run_quality_checks` | TBD | ⬜ Big Task 6 | DQ across all layers |
 | `dag_refresh_serving_layer` | TBD | Deferred | DuckDB + FastAPI refresh |
 | `dag_train_ml_model` | TBD | Deferred | MLflow training |
 | `dag_refresh_ai_metadata` | TBD | Deferred | LLM semantic layer refresh |
 
-### `dag_ingest_cricsheet_register` — task graph
+### `dag_ingest_people_and_names` — task graph
 
 ```
 check_infra

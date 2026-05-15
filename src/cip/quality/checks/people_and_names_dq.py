@@ -1,4 +1,4 @@
-# src/cip/quality/checks/register_dq.py
+# src/cip/quality/checks/people_and_names_dq.py
 #
 # Register pipeline DQ checks — Silver layer.
 #
@@ -7,8 +7,8 @@
 #   REG-SLV-002  silver.persons — person_id unique                           BLOCK
 #   REG-SLV-003  silver.person_identifiers — key columns not null            BLOCK
 #   REG-SLV-004  silver.person_identifiers — unique grain                    WARN
-#   REG-SLV-005  bronze.register_people row count vs people.csv landing      BLOCK
-#   REG-SLV-006  bronze.register_name_variations row count vs names.csv      BLOCK
+#   REG-SLV-005  bronze.people row count vs people.csv landing      BLOCK
+#   REG-SLV-006  bronze.name_variations row count vs names.csv      BLOCK
 #   REG-SLV-007  orphan check — name_variations.identifier in persons        WARN
 #
 # All results are persisted to control.dq_results.
@@ -30,13 +30,13 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_BRONZE_PEOPLE = TableName.bronze("register_people")
-_BRONZE_NAME_VARIATIONS = TableName.bronze("register_name_variations")
+_BRONZE_PEOPLE = TableName.bronze("people")
+_BRONZE_NAME_VARIATIONS = TableName.bronze("name_variations")
 _SILVER_PERSONS = TableName.silver("persons")
 _SILVER_PERSON_IDENTIFIERS = TableName.silver("person_identifiers")
 _SILVER_NAME_VARIATIONS = TableName.silver("name_variations")
 
-_DAG_ID = "dag_ingest_cricsheet_register"
+_DAG_ID = "dag_ingest_people_and_names"
 _TASK_ID = "run_dq"
 _ROW_COUNT_THRESHOLD = 0.99  # Bronze rows must be >= 99% of landing rows
 
@@ -96,8 +96,7 @@ class DQBlockingFailureError(RuntimeError):
     def __init__(self, failures: list[DQCheckResult]) -> None:
         ids = ", ".join(f.check_id for f in failures)
         super().__init__(
-            f"Register DQ: {len(failures)} blocking check(s) failed — {ids}. "
-            f"Check control.dq_results for details."
+            f"Register DQ: {len(failures)} blocking check(s) failed — {ids}. " f"Check control.dq_results for details."
         )
         self.failures = failures
 
@@ -107,13 +106,13 @@ class DQBlockingFailureError(RuntimeError):
 # ===========================================================================
 
 
-class RegisterDQChecker:
+class PeopleAndNamesDQChecker:
     """
     Runs all DQ checks for the Register pipeline Silver layer and persists
     results to control.dq_results.
 
     Usage:
-        checker = RegisterDQChecker.from_settings()
+        checker = PeopleAndNamesDQChecker.from_settings()
         summary = checker.run_all(snapshot_date="2026-05-11", pipeline_run_id="run-xyz")
     """
 
@@ -122,7 +121,7 @@ class RegisterDQChecker:
         self._pg_dsn = pg_dsn
 
     @classmethod
-    def from_settings(cls) -> "RegisterDQChecker":
+    def from_settings(cls) -> "PeopleAndNamesDQChecker":
         from cip.common.settings import get_settings
         from cip.transform.shared.readers import PolarsIcebergReader
 
@@ -146,7 +145,7 @@ class RegisterDQChecker:
         from cip.common.exceptions import TableNotFoundError
 
         logger.info(
-            "RegisterDQChecker.run_all started",
+            "PeopleAndNamesDQChecker.run_all started",
             extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id},
         )
 
@@ -210,7 +209,7 @@ class RegisterDQChecker:
         )
 
         logger.info(
-            "RegisterDQChecker.run_all complete",
+            "PeopleAndNamesDQChecker.run_all complete",
             extra={
                 "snapshot_date": snapshot_date,
                 "total_checks": len(results),
@@ -274,9 +273,7 @@ class RegisterDQChecker:
         """REG-SLV-003: silver.person_identifiers — key columns must not be null."""
         total = df.height
         null_rows = df.filter(
-            pl.col("identifier").is_null()
-            | pl.col("source_system").is_null()
-            | pl.col("source_identifier").is_null()
+            pl.col("identifier").is_null() | pl.col("source_system").is_null() | pl.col("source_identifier").is_null()
         ).height
         status = "PASSED" if null_rows == 0 else "FAILED"
         return DQCheckResult(
@@ -388,11 +385,7 @@ class RegisterDQChecker:
             )
 
         person_ids = persons_df["person_id"].drop_nulls().to_list()
-        orphan_df = (
-            name_var_df.select("identifier")
-            .unique()
-            .filter(~pl.col("identifier").is_in(person_ids))
-        )
+        orphan_df = name_var_df.select("identifier").unique().filter(~pl.col("identifier").is_in(person_ids))
         orphan_count = orphan_df.height
         pct = _pct(orphan_count, total_unique)
 
@@ -416,9 +409,7 @@ class RegisterDQChecker:
             row_count_checked=total_unique,
             failure_row_count=orphan_count,
             failure_pct=pct,
-            detail_json=(
-                {"orphan_sample": orphan_df.head(10).to_series().to_list()} if orphan_count > 0 else None
-            ),
+            detail_json=({"orphan_sample": orphan_df.head(10).to_series().to_list()} if orphan_count > 0 else None),
         )
 
     # -------------------------------------------------------------------------

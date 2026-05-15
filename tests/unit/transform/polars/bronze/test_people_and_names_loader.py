@@ -1,6 +1,6 @@
 # tests/unit/transform/polars/bronze/test_register_loader.py
 """
-Unit tests for RegisterLoader.
+Unit tests for PeopleAndNamesLoader.
 
 PolarsIcebergWriter is mocked — no real MinIO or catalog connection.
 Tests verify:
@@ -22,14 +22,14 @@ from unittest.mock import MagicMock, patch
 import polars as pl
 
 from cip.common.contracts.naming import META
-from cip.ingestion.register.parse import ParsedRegister
-from cip.transform.polars.bronze.register_loader import (
+from cip.ingestion.people_and_names.parse import ParsedPeopleAndNames
+from cip.transform.polars.bronze.people_and_names_loader import (
     PARTITION_COL,
     TABLE_NAME_VARIATIONS,
     TABLE_PERSON_IDENTIFIERS,
     TABLE_PERSONS,
     LoadResult,
-    RegisterLoader,
+    PeopleAndNamesLoader,
 )
 
 # ---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ def _meta(n: int) -> dict:
     }
 
 
-def _make_parsed(p=3, i=7, n=5) -> ParsedRegister:
+def _make_parsed(p=3, i=7, n=5) -> ParsedPeopleAndNames:
     persons = pl.DataFrame(
         {
             "identifier": [f"p{j:03d}" for j in range(p)],
@@ -74,7 +74,7 @@ def _make_parsed(p=3, i=7, n=5) -> ParsedRegister:
             **_meta(n),
         }
     )
-    return ParsedRegister(
+    return ParsedPeopleAndNames(
         persons=persons.lazy(),
         person_identifiers=ids.lazy(),
         name_variations=names.lazy(),
@@ -83,10 +83,10 @@ def _make_parsed(p=3, i=7, n=5) -> ParsedRegister:
     )
 
 
-def _mock_loader(row_count: int = 5) -> tuple[RegisterLoader, MagicMock]:
+def _mock_loader(row_count: int = 5) -> tuple[PeopleAndNamesLoader, MagicMock]:
     mock_writer = MagicMock()
     mock_writer.create_and_append.return_value = row_count
-    loader = RegisterLoader(writer=mock_writer)
+    loader = PeopleAndNamesLoader(writer=mock_writer)
     return loader, mock_writer
 
 
@@ -97,13 +97,13 @@ def _mock_loader(row_count: int = 5) -> tuple[RegisterLoader, MagicMock]:
 
 class TestTableNameConstants:
     def test_persons_table_fqn(self):
-        assert TABLE_PERSONS == "cricket.bronze.register_people"
+        assert TABLE_PERSONS == "bronze.people"
 
     def test_identifiers_table_fqn(self):
-        assert TABLE_PERSON_IDENTIFIERS == "cricket.bronze.register_identifiers"
+        assert TABLE_PERSON_IDENTIFIERS == "bronze.people_identifiers"
 
     def test_name_variations_table_fqn(self):
-        assert TABLE_NAME_VARIATIONS == "cricket.bronze.register_name_variations"
+        assert TABLE_NAME_VARIATIONS == "bronze.name_variations"
 
     def test_partition_col_is_snapshot_date(self):
         assert PARTITION_COL == META.SNAPSHOT_DATE
@@ -310,9 +310,9 @@ class TestOverwriteSnapshot:
 
 
 class TestFromSettings:
-    def test_from_settings_returns_register_loader(self):
-        with patch("cip.transform.polars.bronze.register_loader.PolarsIcebergWriter") as mock_cls:
+    def test_from_settings_returns_people_and_names_loader(self):
+        with patch("cip.transform.polars.bronze.people_and_names_loader.PolarsIcebergWriter") as mock_cls:
             mock_cls.from_settings.return_value = MagicMock()
-            loader = RegisterLoader.from_settings()
-            assert isinstance(loader, RegisterLoader)
+            loader = PeopleAndNamesLoader.from_settings()
+            assert isinstance(loader, PeopleAndNamesLoader)
             mock_cls.from_settings.assert_called_once()

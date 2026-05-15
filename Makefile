@@ -5,7 +5,10 @@ COMPOSE_CMD := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_BASE) -f $(COM
 
 LOCAL_ENV := POSTGRES_HOST=localhost MINIO_S3_ENDPOINT=http://localhost:9000 ICEBERG_REST_URI=http://localhost:8181
 
-.PHONY: up down bootstrap lint test pre-commit run-register
+.PHONY: up down build-airflow bootstrap lint test pre-commit run-register
+
+build-airflow:
+	$(COMPOSE_CMD) build airflow-webserver airflow-scheduler
 
 up:
 	@if [ ! -f $(ENV_FILE) ]; then echo "Missing $(ENV_FILE). Copy .env.example first."; exit 1; fi
@@ -45,7 +48,7 @@ pre-commit:
 
 ## Run register ingestion pipeline locally (overrides Docker-internal hostnames)
 run-register:
-	$(LOCAL_ENV) poetry run python -m cip.ingestion.jobs.ingest_cricsheet_register $(ARGS)
+	$(LOCAL_ENV) poetry run python -m cip.ingestion.jobs.ingest_people_and_names $(ARGS)
 
 ## Inspect all Iceberg table contents (Bronze + Silver register tables)
 inspect-tables:

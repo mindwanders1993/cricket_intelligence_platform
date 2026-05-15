@@ -6,17 +6,17 @@
 #   - Download people.csv and names.csv from cricsheet.org
 #   - Compute SHA-256 checksum of each file
 #   - Detect schema drift vs the previous snapshot
-#   - Upload raw files to s3://cricket-landing/register_csv/snapshot_date=.../
+#   - Upload raw files to s3://cricket-source-files/people_and_names/csv/snapshot_date=.../
 #   - Write / update rows in control.register_ingestion_log
 #   - Write schema fingerprint to control.register_schema_versions
 #
 # Called by:
-#   platform/ingestion/jobs/ingest_cricsheet_register.py  (job entry point)
-#   orchestration/airflow/dags/dag_ingest_cricsheet_register.py (via PythonOperator)
+#   platform/ingestion/jobs/ingest_people_and_names.py  (job entry point)
+#   orchestration/airflow/dags/dag_ingest_people_and_names.py (via PythonOperator)
 #
 # Usage:
-#   from cip.ingestion.register.download import RegisterDownloader
-#   downloader = RegisterDownloader.from_settings()
+#   from cip.ingestion.people_and_names.download import PeopleAndNamesDownloader
+#   downloader = PeopleAndNamesDownloader.from_settings()
 #   results = downloader.run(snapshot_date="2026-05-10", pipeline_run_id="manual-001")
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ class FileDownloadResult:
 
 
 @dataclass
-class RegisterDownloadSummary:
+class PeopleAndNamesDownloadSummary:
     """Aggregated result of a full register download run."""
 
     pipeline_run_id: str
@@ -113,17 +113,17 @@ class RegisterDownloadSummary:
 
 
 # ===========================================================================
-# RegisterDownloader
+# PeopleAndNamesDownloader
 # ===========================================================================
 
 
-class RegisterDownloader:
+class PeopleAndNamesDownloader:
     """
     Downloads Cricsheet Register CSV files, validates them, uploads to landing,
     and writes full audit trail to the control schema.
 
     Instantiation:
-        downloader = RegisterDownloader.from_settings()
+        downloader = PeopleAndNamesDownloader.from_settings()
 
     Usage:
         summary = downloader.run(snapshot_date="2026-05-10")
@@ -140,7 +140,7 @@ class RegisterDownloader:
         self._timeout = download_timeout
 
     @classmethod
-    def from_settings(cls) -> "RegisterDownloader":
+    def from_settings(cls) -> "PeopleAndNamesDownloader":
         cfg = get_settings()
         return cls(
             minio_client=MinIOClient.from_settings(),
@@ -157,7 +157,7 @@ class RegisterDownloader:
         snapshot_date: str | None = None,
         pipeline_run_id: str | None = None,
         force: bool = False,
-    ) -> RegisterDownloadSummary:
+    ) -> PeopleAndNamesDownloadSummary:
         """
         Execute the full register download pipeline for all source files.
 
@@ -167,7 +167,7 @@ class RegisterDownloader:
             force:            If True, re-download even if already logged as SUCCESS.
 
         Returns:
-            RegisterDownloadSummary with per-file results and overall status.
+            PeopleAndNamesDownloadSummary with per-file results and overall status.
         """
         snapshot_date = snapshot_date or date.today().isoformat()
         pipeline_run_id = pipeline_run_id or f"manual-{uuid.uuid4().hex[:8]}"
@@ -177,7 +177,7 @@ class RegisterDownloader:
             extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id},
         )
 
-        summary = RegisterDownloadSummary(
+        summary = PeopleAndNamesDownloadSummary(
             pipeline_run_id=pipeline_run_id,
             snapshot_date=snapshot_date,
         )
@@ -287,10 +287,10 @@ class RegisterDownloader:
         # Step 6 — Schema drift detection
         self._detect_schema_drift(result)
 
-        # Step 7 — Upload to MinIO landing
-        upload = self._minio.upload_to_landing(
+        # Step 7 — Upload to MinIO source-files bucket
+        upload = self._minio.upload_to_source_files(
             local_path=local_path,
-            prefix="register_csv",
+            prefix="people_and_names/csv",
             snapshot_date=result.snapshot_date,
             extra_metadata={
                 "source_file": result.source_file,
@@ -407,7 +407,7 @@ class RegisterDownloader:
                     sql,
                     (
                         result.pipeline_run_id,
-                        "dag_ingest_cricsheet_register",
+                        "dag_ingest_people_and_names",
                         result.source_file,
                         result.source_url,
                         result.snapshot_date,

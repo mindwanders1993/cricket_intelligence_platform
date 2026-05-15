@@ -55,7 +55,7 @@ class TablePartitionSpec:
     Complete partition specification for one Iceberg table.
 
     Attributes:
-        table_fqn:      Iceberg FQN pattern (e.g. "cricket.bronze.*")
+        table_fqn:      Iceberg FQN pattern (e.g. "bronze.*")
         fields:         Ordered list of PartitionField
         query_pattern:  Description of the query this partitioning optimises
         write_order:    Suggested sort columns for write distribution
@@ -179,7 +179,7 @@ class PartitionStrategy:
     # Keeps replay simple: reprocess date X → overwrite date X partition
 
     _BRONZE_DEFAULT = TablePartitionSpec(
-        table_fqn="cricket.bronze.*",
+        table_fqn="bronze.*",
         fields=[
             PartitionField(
                 column=META.SNAPSHOT_DATE,
@@ -197,7 +197,7 @@ class PartitionStrategy:
 
     _SILVER_SPECS: dict[str, TablePartitionSpec] = {
         "matches": TablePartitionSpec(
-            table_fqn="cricket.silver.matches",
+            table_fqn="silver.matches",
             fields=[
                 PartitionField(column="match_type", transform="identity", name="match_type"),
                 PartitionField(column=META.SNAPSHOT_DATE, transform="day", name="snapshot_day"),
@@ -206,7 +206,7 @@ class PartitionStrategy:
             write_order=["match_type", "season", META.SNAPSHOT_DATE],
         ),
         "deliveries": TablePartitionSpec(
-            table_fqn="cricket.silver.deliveries",
+            table_fqn="silver.deliveries",
             fields=[
                 PartitionField(column="match_type", transform="identity", name="match_type"),
                 PartitionField(column=META.SNAPSHOT_DATE, transform="day", name="snapshot_day"),
@@ -218,7 +218,7 @@ class PartitionStrategy:
             write_order=["match_type", "match_id", "innings_number", "over", "ball"],
         ),
         "innings": TablePartitionSpec(
-            table_fqn="cricket.silver.innings",
+            table_fqn="silver.innings",
             fields=[
                 PartitionField(column="match_type", transform="identity", name="match_type"),
                 PartitionField(column=META.SNAPSHOT_DATE, transform="day", name="snapshot_day"),
@@ -227,7 +227,7 @@ class PartitionStrategy:
             write_order=["match_type", "match_id", "innings_number"],
         ),
         "wickets": TablePartitionSpec(
-            table_fqn="cricket.silver.wickets",
+            table_fqn="silver.wickets",
             fields=[
                 PartitionField(column="match_type", transform="identity", name="match_type"),
                 PartitionField(column=META.SNAPSHOT_DATE, transform="day", name="snapshot_day"),
@@ -236,7 +236,7 @@ class PartitionStrategy:
             write_order=["match_type", "match_id"],
         ),
         "persons": TablePartitionSpec(
-            table_fqn="cricket.silver.persons",
+            table_fqn="silver.persons",
             fields=[
                 PartitionField(column=META.SNAPSHOT_DATE, transform="month", name="snapshot_month"),
             ],
@@ -247,7 +247,7 @@ class PartitionStrategy:
             write_order=["person_id"],
         ),
         "person_identifiers": TablePartitionSpec(
-            table_fqn="cricket.silver.person_identifiers",
+            table_fqn="silver.person_identifiers",
             fields=[
                 PartitionField(column="source_system", transform="identity", name="source_system"),
                 PartitionField(column=META.SNAPSHOT_DATE, transform="month", name="snapshot_month"),
@@ -259,7 +259,7 @@ class PartitionStrategy:
             write_order=["source_system", "source_identifier"],
         ),
         "name_variations": TablePartitionSpec(
-            table_fqn="cricket.silver.name_variations",
+            table_fqn="silver.name_variations",
             fields=[
                 PartitionField(column=META.SNAPSHOT_DATE, transform="month", name="snapshot_month"),
             ],
@@ -267,7 +267,7 @@ class PartitionStrategy:
             write_order=["identifier", "name"],
         ),
         "match_players": TablePartitionSpec(
-            table_fqn="cricket.silver.match_players",
+            table_fqn="silver.match_players",
             fields=[
                 PartitionField(column="match_type", transform="identity", name="match_type"),
                 PartitionField(column=META.SNAPSHOT_DATE, transform="day", name="snapshot_day"),
@@ -276,7 +276,7 @@ class PartitionStrategy:
             write_order=["match_type", "match_id", "person_id"],
         ),
         "match_officials": TablePartitionSpec(
-            table_fqn="cricket.silver.match_officials",
+            table_fqn="silver.match_officials",
             fields=[
                 PartitionField(column=META.SNAPSHOT_DATE, transform="month", name="snapshot_month"),
             ],
@@ -284,7 +284,7 @@ class PartitionStrategy:
             write_order=["match_id", "official_role"],
         ),
         "teams": TablePartitionSpec(
-            table_fqn="cricket.silver.teams",
+            table_fqn="silver.teams",
             fields=[
                 PartitionField(column=META.SNAPSHOT_DATE, transform="month", name="snapshot_month"),
             ],
@@ -292,7 +292,7 @@ class PartitionStrategy:
             write_order=["team_name"],
         ),
         "venues": TablePartitionSpec(
-            table_fqn="cricket.silver.venues",
+            table_fqn="silver.venues",
             fields=[
                 PartitionField(column=META.SNAPSHOT_DATE, transform="month", name="snapshot_month"),
             ],
@@ -300,7 +300,7 @@ class PartitionStrategy:
             write_order=["venue_name"],
         ),
         "competitions": TablePartitionSpec(
-            table_fqn="cricket.silver.competitions",
+            table_fqn="silver.competitions",
             fields=[
                 PartitionField(column=META.SNAPSHOT_DATE, transform="month", name="snapshot_month"),
             ],
@@ -315,7 +315,7 @@ class PartitionStrategy:
 
     _GOLD_SPECS: dict[str, TablePartitionSpec] = {
         "fact_delivery": TablePartitionSpec(
-            table_fqn="cricket.gold.fact_delivery",
+            table_fqn="gold.fact_delivery",
             fields=[
                 PartitionField(column="match_type", transform="identity", name="match_type"),
                 PartitionField(column="season", transform="identity", name="season"),
@@ -328,7 +328,7 @@ class PartitionStrategy:
             write_order=["match_type", "season", "match_id", "innings_number", "over", "ball"],
         ),
         "fact_innings": TablePartitionSpec(
-            table_fqn="cricket.gold.fact_innings",
+            table_fqn="gold.fact_innings",
             fields=[
                 PartitionField(column="match_type", transform="identity", name="match_type"),
                 PartitionField(column="season", transform="identity", name="season"),
@@ -337,7 +337,7 @@ class PartitionStrategy:
             write_order=["match_type", "season", "match_id"],
         ),
         "fact_match_result": TablePartitionSpec(
-            table_fqn="cricket.gold.fact_match_result",
+            table_fqn="gold.fact_match_result",
             fields=[
                 PartitionField(column="match_type", transform="identity", name="match_type"),
                 PartitionField(column="season", transform="identity", name="season"),
@@ -346,7 +346,7 @@ class PartitionStrategy:
             write_order=["match_type", "season", "match_date"],
         ),
         "fact_player_match": TablePartitionSpec(
-            table_fqn="cricket.gold.fact_player_match",
+            table_fqn="gold.fact_player_match",
             fields=[
                 PartitionField(column="match_type", transform="identity", name="match_type"),
                 PartitionField(column="season", transform="identity", name="season"),
@@ -356,13 +356,13 @@ class PartitionStrategy:
         ),
         # Dimensions — unpartitioned (small, fits in single file per table)
         "dim_player": TablePartitionSpec(
-            table_fqn="cricket.gold.dim_player",
+            table_fqn="gold.dim_player",
             fields=[],
             query_pattern="Small dimension — no partitioning needed",
             write_order=["player_id"],
         ),
         "dim_match": TablePartitionSpec(
-            table_fqn="cricket.gold.dim_match",
+            table_fqn="gold.dim_match",
             fields=[
                 PartitionField(column="match_type", transform="identity", name="match_type"),
             ],
@@ -370,25 +370,25 @@ class PartitionStrategy:
             write_order=["match_type", "season", "match_date"],
         ),
         "dim_team": TablePartitionSpec(
-            table_fqn="cricket.gold.dim_team",
+            table_fqn="gold.dim_team",
             fields=[],
             query_pattern="Small dimension",
             write_order=["team_id"],
         ),
         "dim_venue": TablePartitionSpec(
-            table_fqn="cricket.gold.dim_venue",
+            table_fqn="gold.dim_venue",
             fields=[],
             query_pattern="Small dimension",
             write_order=["venue_id"],
         ),
         "dim_competition": TablePartitionSpec(
-            table_fqn="cricket.gold.dim_competition",
+            table_fqn="gold.dim_competition",
             fields=[],
             query_pattern="Small dimension",
             write_order=["competition_id"],
         ),
         "dim_date": TablePartitionSpec(
-            table_fqn="cricket.gold.dim_date",
+            table_fqn="gold.dim_date",
             fields=[
                 PartitionField(column="year", transform="identity", name="year"),
             ],

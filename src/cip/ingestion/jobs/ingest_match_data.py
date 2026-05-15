@@ -1,12 +1,12 @@
-# src/cip/ingestion/jobs/ingest_cricsheet_archives.py
+# src/cip/ingestion/jobs/ingest_match_data.py
 #
 # Airflow-callable entry points for the Cricsheet archive ingestion pipeline.
 # Each Airflow task calls exactly one function from this module.
 #
 # Pipeline stages:
-#   task_download_archive  → download all_json.zip to MinIO landing
-#   task_extract_archive   → extract JSONs from ZIP to extracted_json prefix
-#   task_load_bronze       → read JSONs, parse, write to cricket.bronze.match_documents
+#   task_download_archive  → download all_json.zip to cricket-source-files/match_data/zip/
+#   task_extract_archive   → extract JSONs from ZIP to match_data/json/ prefix
+#   task_load_bronze       → read JSONs, parse, write to bronze.match_data
 #   task_run_dq            → run MAT-BRZ DQ checks, persist to control.dq_results
 #
 # Design:
@@ -15,11 +15,11 @@
 #   - Jinja string coercion handled here for bool params.
 #
 # Called by:
-#   orchestration/airflow/dags/dag_ingest_cricsheet_archives.py
+#   orchestration/airflow/dags/dag_ingest_match_data.py
 #
 # Manual invocation (dev):
-#   poetry run python -m cip.ingestion.jobs.ingest_cricsheet_archives --task all
-#   poetry run python -m cip.ingestion.jobs.ingest_cricsheet_archives --snapshot-date 2026-05-01 --task download
+#   poetry run python -m cip.ingestion.jobs.ingest_match_data --task all
+#   poetry run python -m cip.ingestion.jobs.ingest_match_data --snapshot-date 2026-05-01 --task download
 
 from __future__ import annotations
 
@@ -67,12 +67,12 @@ def task_download_archive(
         snapshot_date:       ISO date of this run
         pipeline_run_id:     Airflow run_id
         archive_download_id: FK into control.archive_download_log
-        landing_path:        s3://cricket-landing/raw_zips/snapshot_date=.../all_json.zip
+        landing_path:        s3://cricket-source-files/match_data/zip/snapshot_date=.../all_json.zip
         file_size_bytes:     Archive size in bytes
         checksum_sha256:     SHA-256 of the downloaded file
         skipped:             True if idempotency guard fired
     """
-    from cip.ingestion.cricsheet.download import ArchiveDownloader
+    from cip.ingestion.match_data.download import MatchDataDownloader
 
     force = _coerce_bool(force)
 
@@ -81,7 +81,7 @@ def task_download_archive(
         extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id, "force": force},
     )
 
-    downloader = ArchiveDownloader.from_settings()
+    downloader = MatchDataDownloader.from_settings()
     record = downloader.download(
         snapshot_date=snapshot_date,
         pipeline_run_id=pipeline_run_id,
@@ -116,8 +116,8 @@ def task_extract_archive(
     """
     Airflow PythonOperator callable — Stage 2.
 
-    Extracts all .json files from the landing ZIP and uploads them to
-    the extracted_json prefix. Writes _manifest.json alongside.
+    Extracts all .json files from the source-files ZIP and uploads them to
+    the match_data/json prefix. Writes _manifest.json alongside.
 
     XCom payload:
         snapshot_date:    ISO date
@@ -126,7 +126,7 @@ def task_extract_archive(
         extracted_prefix: s3:// prefix where JSONs were written
         skipped:          True if idempotency guard fired
     """
-    from cip.ingestion.cricsheet.extract import ArchiveExtractor
+    from cip.ingestion.match_data.extract import MatchDataExtractor
 
     force = _coerce_bool(force)
 
@@ -135,7 +135,7 @@ def task_extract_archive(
         extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id, "force": force},
     )
 
-    extractor = ArchiveExtractor.from_settings()
+    extractor = MatchDataExtractor.from_settings()
     result = extractor.extract(
         snapshot_date=snapshot_date,
         pipeline_run_id=pipeline_run_id,
@@ -169,7 +169,7 @@ def task_load_bronze(
     Airflow PythonOperator callable — Stage 3.
 
     Reads extracted JSON files from MinIO, parses header fields, attaches
-    revision numbers, and appends to cricket.bronze.match_documents.
+    revision numbers, and appends to bronze.match_data.
 
     XCom payload:
         snapshot_date:    ISO date
@@ -180,7 +180,7 @@ def task_load_bronze(
         files_failed:     JSON files that raised parse errors
         skipped:          True if idempotency guard fired
     """
-    from cip.transform.polars.bronze.match_documents import MatchBronzeLoader
+    from cip.transform.polars.bronze.match_data import MatchBronzeLoader
 
     force = _coerce_bool(force)
 

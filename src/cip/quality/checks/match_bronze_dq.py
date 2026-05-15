@@ -19,7 +19,7 @@ import polars as pl
 
 from cip.common.contracts.naming import META, TableName
 from cip.common.logging import get_logger
-from cip.quality.checks.register_dq import (
+from cip.quality.checks.people_and_names_dq import (
     DQBlockingFailureError,
     DQCheckResult,
     DQRunSummary,
@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_BRONZE_TABLE = TableName.bronze("match_documents")
-_DAG_ID = "dag_ingest_cricsheet_archives"
+_BRONZE_TABLE = TableName.bronze("match_data")
+_DAG_ID = "dag_ingest_match_data"
 _TASK_ID = "run_dq"
 _ARCHIVE_FILE = "all_json.zip"
 _NULL_THRESHOLD_PCT = 1.0  # MAT-BRZ-004: warn if > 1% nulls in metadata cols
@@ -82,8 +82,13 @@ class MatchBronzeDQChecker:
 
         snap_filter = f"{META.SNAPSHOT_DATE} = '{snapshot_date}'"
 
+        # Project only the columns the DQ checks actually need. Skipping
+        # `raw_json` (~50 KB/row × 21k rows ≈ 1 GB) prevents OOM kills on the
+        # Airflow worker — none of the checks below reference it.
+        _DQ_COLS = ["match_id", "revision", "match_type", "gender", "team_a", "team_b"]
+
         try:
-            bronze_df = self._reader.read_table(_BRONZE_TABLE, row_filter=snap_filter)
+            bronze_df = self._reader.read_table(_BRONZE_TABLE, columns=_DQ_COLS, row_filter=snap_filter)
         except TableNotFoundError as exc:
             logger.error(
                 "Bronze table not found — cannot run DQ checks",
@@ -134,7 +139,7 @@ class MatchBronzeDQChecker:
         if ingestion_log is None:
             return DQCheckResult(
                 check_id="MAT-BRZ-001",
-                check_name="bronze.match_documents — files_failed == 0",
+                check_name="bronze.match_data — files_failed == 0",
                 layer="BRONZE",
                 source_file=_ARCHIVE_FILE,
                 table_name=_BRONZE_TABLE,
@@ -148,7 +153,7 @@ class MatchBronzeDQChecker:
         status = "PASSED" if files_failed == 0 else "FAILED"
         return DQCheckResult(
             check_id="MAT-BRZ-001",
-            check_name="bronze.match_documents — files_failed == 0",
+            check_name="bronze.match_data — files_failed == 0",
             layer="BRONZE",
             source_file=_ARCHIVE_FILE,
             table_name=_BRONZE_TABLE,
@@ -168,7 +173,7 @@ class MatchBronzeDQChecker:
         status = "PASSED" if dup_count == 0 else "FAILED"
         return DQCheckResult(
             check_id="MAT-BRZ-002",
-            check_name="bronze.match_documents — (match_id, revision) unique",
+            check_name="bronze.match_data — (match_id, revision) unique",
             layer="BRONZE",
             source_file=_ARCHIVE_FILE,
             table_name=_BRONZE_TABLE,
@@ -188,7 +193,7 @@ class MatchBronzeDQChecker:
         if manifest is None:
             return DQCheckResult(
                 check_id="MAT-BRZ-003",
-                check_name="bronze.match_documents — row count == manifest file_count",
+                check_name="bronze.match_data — row count == manifest file_count",
                 layer="BRONZE",
                 source_file=_ARCHIVE_FILE,
                 table_name=_BRONZE_TABLE,
@@ -204,7 +209,7 @@ class MatchBronzeDQChecker:
         status = "PASSED" if bronze_rows == expected else "FAILED"
         return DQCheckResult(
             check_id="MAT-BRZ-003",
-            check_name="bronze.match_documents — row count == manifest file_count",
+            check_name="bronze.match_data — row count == manifest file_count",
             layer="BRONZE",
             source_file=_ARCHIVE_FILE,
             table_name=_BRONZE_TABLE,
@@ -226,7 +231,7 @@ class MatchBronzeDQChecker:
         if not available_cols or total == 0:
             return DQCheckResult(
                 check_id="MAT-BRZ-004",
-                check_name="bronze.match_documents — metadata coverage (match_type/gender/team_a/team_b)",
+                check_name="bronze.match_data — metadata coverage (match_type/gender/team_a/team_b)",
                 layer="BRONZE",
                 source_file=_ARCHIVE_FILE,
                 table_name=_BRONZE_TABLE,
@@ -243,7 +248,7 @@ class MatchBronzeDQChecker:
         status = "PASSED" if pct <= _NULL_THRESHOLD_PCT else "WARNING"
         return DQCheckResult(
             check_id="MAT-BRZ-004",
-            check_name="bronze.match_documents — metadata coverage (match_type/gender/team_a/team_b)",
+            check_name="bronze.match_data — metadata coverage (match_type/gender/team_a/team_b)",
             layer="BRONZE",
             source_file=_ARCHIVE_FILE,
             table_name=_BRONZE_TABLE,
@@ -289,7 +294,7 @@ class MatchBronzeDQChecker:
     def _get_manifest(self, snapshot_date: str) -> dict | None:
         """Return manifest as dict, or None if not found."""
         try:
-            from cip.ingestion.cricsheet.manifest import manifest_object_key
+            from cip.ingestion.match_data.manifest import manifest_object_key
             from cip.ingestion.io.minio import MinIOClient
 
             from cip.common.settings import get_settings
@@ -297,7 +302,7 @@ class MatchBronzeDQChecker:
             cfg = get_settings().storage
             minio = MinIOClient.from_settings()
             key = manifest_object_key(snapshot_date)
-            data = minio.read_bytes(cfg.bucket_landing, key)
+            data = minio.read_bytes(cfg.bucket_source_files, key)
             import json
 
             return json.loads(data)

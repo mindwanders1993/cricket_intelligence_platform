@@ -22,11 +22,11 @@ This file provides foundational mandates and project context for Gemini CLI when
 
 ## Gemini Graphify
 
-This project uses `gemini graphify` to maintain a knowledge graph of the codebase at `gemini-graphify-out/` with god nodes, community structure, and cross-file relationships.
+This project uses `gemini graphify` to maintain a knowledge graph of the codebase at `graphify-out/` with god nodes, community structure, and cross-file relationships.
 
 Rules:
-- ALWAYS read `gemini-graphify-out/GRAPH_REPORT.md` before reading any source files, running grep/glob searches, or answering codebase questions. The graph is your primary map of the codebase.
-- IF `gemini-graphify-out/wiki/index.md` EXISTS, navigate it instead of reading raw files.
+- ALWAYS read `graphify-out/GRAPH_REPORT.md` before reading any source files, running grep/glob searches, or answering codebase questions. The graph is your primary map of the codebase.
+- IF `graphify-out/wiki/index.md` EXISTS, navigate it instead of reading raw files.
 - For cross-module "how does X relate to Y" questions, prefer `gemini graphify query "<question>"`, `gemini graphify path "<A>" "<B>"`, or `gemini graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files.
 - After modifying code, run `gemini graphify update .` to keep the graph current (AST-only, no API cost).
 

@@ -1,12 +1,15 @@
-# orchestration/airflow/dags/dag_ingest_cricsheet_register.py
+# orchestration/airflow/dags/dag_ingest_people_and_names.py
 #
-# DAG: dag_ingest_cricsheet_register
+# DAG: dag_ingest_people_and_names
 #
 # Purpose:
 #   Cricsheet Register pipeline: Download + Land → Bronze Iceberg load.
-#   people.csv + names.csv → cricket.bronze.register_people
-#                          → cricket.bronze.register_identifiers
-#                          → cricket.bronze.register_name_variations
+#   people.csv + names.csv → bronze.people
+#                          → bronze.people_identifiers
+#                          → bronze.name_variations
+#
+# Silver promotion + DQ live in dag_build_silver_people_and_names.py
+# and are triggered separately after this DAG completes.
 #
 # Schedule: Weekly on Sunday at 06:00 IST (00:30 UTC)
 #
@@ -25,11 +28,11 @@
 #
 # Manual trigger examples:
 #   # Normal weekly run with explicit date
-#   airflow dags trigger dag_ingest_cricsheet_register \
+#   airflow dags trigger dag_ingest_people_and_names \
 #     --conf '{"snapshot_date": "2026-05-11"}'
 #
 #   # Force re-run for a past snapshot
-#   airflow dags trigger dag_ingest_cricsheet_register \
+#   airflow dags trigger dag_ingest_people_and_names \
 #     --conf '{"snapshot_date": "2026-05-04", "force": true}'
 
 from __future__ import annotations
@@ -41,11 +44,9 @@ from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator, ShortCircuitOperator
 
-from cip.ingestion.jobs.ingest_cricsheet_register import (
+from cip.ingestion.jobs.ingest_people_and_names import (
     task_download_and_land,
     task_load_bronze,
-    task_load_silver,
-    task_run_dq,
 )
 
 logger = logging.getLogger(__name__)
@@ -201,22 +202,23 @@ def _log_schema_drift_alert(**context) -> None:
 # ---------------------------------------------------------------------------
 
 with DAG(
-    dag_id="dag_ingest_cricsheet_register",
+    dag_id="dag_ingest_people_and_names",
     description=(
-        "Cricsheet Register pipeline: Download (people.csv + names.csv) "
-        "→ MinIO landing → Bronze Iceberg → Silver Iceberg → DQ checks"
+        "Cricsheet Register pipeline: Download (people.csv + names.csv) " "→ MinIO landing → Bronze Iceberg tables"
     ),
     start_date=datetime(2026, 5, 1),
     schedule="30 0 * * 0",  # Sunday 00:30 UTC ≡ 06:00 IST
     catchup=False,
     max_active_runs=1,
     default_args=_DEFAULT_ARGS,
-    tags=["ingestion", "register", "landing", "bronze", "silver", "dq", "cricsheet"],
+    tags=["ingestion", "register", "landing", "bronze", "cricsheet"],
     doc_md="""
-## dag_ingest_cricsheet_register
+## dag_ingest_people_and_names
 
 Downloads `people.csv` + `names.csv` from [cricsheet.org](https://cricsheet.org/register/)
 and writes them to three Bronze Iceberg tables.
+
+Silver promotion and DQ checks are handled by `dag_build_silver_people_and_names`.
 
 ### Task graph
 
@@ -235,9 +237,9 @@ check_infra
 
 | Iceberg table | Source | Key columns |
 |---|---|---|
-| `cricket.bronze.register_people` | `people.csv` | `identifier` |
-| `cricket.bronze.register_identifiers` | `people.csv` key_* | `identifier, key_source, key_value` |
-| `cricket.bronze.register_name_variations` | `names.csv` | `identifier, name` |
+| `bronze.people` | `people.csv` | `identifier` |
+| `bronze.people_identifiers` | `people.csv` key_* | `identifier, key_source, key_value` |
+| `bronze.name_variations` | `names.csv` | `identifier, name` |
 
 ### Idempotency
 
@@ -245,17 +247,17 @@ check_infra
   `control.register_ingestion_log` for `(source_file, snapshot_date)`.
 - `load_bronze`: append-only by default (`force=false`). Pass `{"force": true}`
   to delete the `_snapshot_date` partition before re-writing
-  (`RegisterLoader.overwrite_snapshot`).
+  (`PeopleAndNamesLoader.overwrite_snapshot`).
 
 ### Manual trigger
 
 ```bash
 # Normal run
-airflow dags trigger dag_ingest_cricsheet_register \
+airflow dags trigger dag_ingest_people_and_names \\
   --conf '{"snapshot_date": "2026-05-11"}'
 
 # Force re-run for a historical snapshot
-airflow dags trigger dag_ingest_cricsheet_register \
+airflow dags trigger dag_ingest_people_and_names \\
   --conf '{"snapshot_date": "2026-05-04", "force": true}'
 ```
 
@@ -331,52 +333,13 @@ airflow dags trigger dag_ingest_cricsheet_register \
         doc_md=(
             "Reads landing CSVs from MinIO (all-string Polars), computes _row_hash, "
             "injects platform metadata, appends to Iceberg Bronze tables:\n"
-            "- cricket.bronze.register_people\n"
-            "- cricket.bronze.register_identifiers (key_* exploded)\n"
-            "- cricket.bronze.register_name_variations"
+            "- bronze.people\n"
+            "- bronze.people_identifiers (key_* exploded)\n"
+            "- bronze.name_variations"
         ),
     )
 
-    # ── Task 4: Load Silver ──────────────────────────────────────────────────
-    load_silver = PythonOperator(
-        task_id="load_silver",
-        python_callable=task_load_silver,
-        op_kwargs={
-            "snapshot_date": _SNAPSHOT_DATE,
-            "pipeline_run_id": _PIPELINE_RUN_ID,
-        },
-        execution_timeout=timedelta(minutes=30),
-        doc_md=(
-            "PySpark job: promotes Bronze Register tables to Silver Iceberg tables:\n"
-            "- cricket.silver.persons (identifier→person_id, deduped)\n"
-            "- cricket.silver.person_identifiers (key_source→source_system)\n"
-            "- cricket.silver.name_variations (deduped on identifier+name)"
-        ),
-    )
-
-    # ── Task 5: Run DQ checks ────────────────────────────────────────────────
-    run_dq = PythonOperator(
-        task_id="run_dq",
-        python_callable=task_run_dq,
-        op_kwargs={
-            "snapshot_date": _SNAPSHOT_DATE,
-            "pipeline_run_id": _PIPELINE_RUN_ID,
-        },
-        execution_timeout=timedelta(minutes=15),
-        doc_md=(
-            "Runs 7 DQ checks against Silver + Bronze Iceberg tables for this snapshot:\n"
-            "- REG-SLV-001  silver.persons — person_id not null (BLOCK)\n"
-            "- REG-SLV-002  silver.persons — person_id unique (BLOCK)\n"
-            "- REG-SLV-003  silver.person_identifiers — key columns not null (BLOCK)\n"
-            "- REG-SLV-004  silver.person_identifiers — unique grain (WARN)\n"
-            "- REG-SLV-005  people.csv landing vs Bronze row count (BLOCK)\n"
-            "- REG-SLV-006  names.csv landing vs Bronze row count (BLOCK)\n"
-            "- REG-SLV-007  orphan identifiers in name_variations (WARN)\n"
-            "Results persisted to control.dq_results. BLOCK failures fail this task."
-        ),
-    )
-
-    # ── Task 6: Done marker ──────────────────────────────────────────────────
+    # ── Task 4: Done marker ──────────────────────────────────────────────────
     done = EmptyOperator(
         task_id="done",
         trigger_rule="all_done",
@@ -389,13 +352,11 @@ airflow dags trigger dag_ingest_cricsheet_register \
     #       └─► download_and_land
     #             ├─► schema_drift_check ──► schema_drift_alert
     #             └─► load_bronze
-    #                   └─► load_silver
-    #                         └─► run_dq
-    #                               └─► done
+    #                   └─► done
     #
     # Note: load_bronze trigger_rule=all_done ensures Bronze runs whether or
     # not the schema drift branch fires. schema_drift_alert is informational.
     #
     check_infra >> download_and_land
     download_and_land >> schema_drift_check >> schema_drift_alert
-    download_and_land >> load_bronze >> load_silver >> run_dq >> done
+    download_and_land >> load_bronze >> done

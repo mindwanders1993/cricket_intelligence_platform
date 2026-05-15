@@ -13,7 +13,7 @@
 # Usage:
 #   from cip.transform.shared.readers import PolarsIcebergReader
 #   reader = PolarsIcebergReader.from_settings()
-#   df = reader.read_table("cricket.bronze.match_documents")
+#   df = reader.read_table("bronze.match_data")
 
 from __future__ import annotations
 
@@ -54,20 +54,36 @@ def _build_pyiceberg_catalog_props() -> dict[str, str]:
     }
 
 
+_SPARK_ICEBERG_CATALOG_LABEL = "iceberg"
+# Why this label exists separate from cfg.iceberg.catalog_name:
+#   The platform's table FQN convention is `cricket.<layer>.<table>` —
+#   `cricket` is the first element of the namespace path, not a Spark
+#   catalog name. If we register Spark's Iceberg catalog under the label
+#   `cricket`, Spark interprets queries like `bronze.match_data`
+#   as catalog=`cricket`, namespace=`bronze`, table=`match_documents`,
+#   stripping the `cricket` prefix from the namespace lookup. PyIceberg has
+#   already stored the tables at namespace=`("cricket","bronze")`, so the
+#   lookup fails. Using a distinct label (`iceberg`) makes Spark treat the
+#   whole FQN as a 3-part identifier under the default catalog, matching
+#   PyIceberg's storage layout exactly.
+
+
 def _build_spark_iceberg_conf() -> dict[str, str]:
     """
     Build Spark configuration dict for Iceberg REST catalog + MinIO.
     Injected into SparkSession.builder at job startup.
     """
     cfg = get_settings()
-    catalog = cfg.iceberg.catalog_name
+    catalog = _SPARK_ICEBERG_CATALOG_LABEL
     spark_cfg = cfg.spark
 
     # JAR packages downloaded from Maven on first run (requires internet access).
-    # Iceberg runtime + S3A connector for MinIO access.
+    # Iceberg runtime + iceberg-aws-bundle (provides AWS SDK v2 used by S3FileIO)
+    # + S3A connector for Hadoop FS access to MinIO.
     jars_packages = ",".join(
         [
             spark_cfg.iceberg_jar,
+            f"org.apache.iceberg:iceberg-aws-bundle:{spark_cfg.iceberg_version}",
             f"org.apache.hadoop:hadoop-aws:{spark_cfg.hadoop_aws_version}",
             f"com.amazonaws:aws-java-sdk-bundle:{spark_cfg.aws_java_sdk_version}",
         ]
@@ -76,16 +92,26 @@ def _build_spark_iceberg_conf() -> dict[str, str]:
     return {
         # JAR packages (Iceberg runtime + S3A / MinIO)
         "spark.jars.packages": jars_packages,
+        # Driver/executor memory — must be applied via builder.config() BEFORE
+        # getOrCreate() so the JVM is launched with the right -Xmx.  Without
+        # this the JVM uses pyspark's default 1g and OOMs on 20k+ match docs.
+        "spark.driver.memory": spark_cfg.driver_memory,
+        "spark.executor.memory": spark_cfg.executor_memory,
+        "spark.driver.maxResultSize": "1g",
         # Iceberg REST catalog
         f"spark.sql.catalog.{catalog}": "org.apache.iceberg.spark.SparkCatalog",
         f"spark.sql.catalog.{catalog}.catalog-impl": "org.apache.iceberg.rest.RESTCatalog",
         f"spark.sql.catalog.{catalog}.uri": cfg.iceberg.rest_uri,
-        f"spark.sql.catalog.{catalog}.warehouse": cfg.iceberg.warehouse_path,
+        f"spark.sql.catalog.{catalog}.warehouse": cfg.iceberg.lakehouse_uri,
         f"spark.sql.catalog.{catalog}.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
         f"spark.sql.catalog.{catalog}.s3.endpoint": cfg.storage.endpoint,
         f"spark.sql.catalog.{catalog}.s3.path-style-access": "true",
         f"spark.sql.catalog.{catalog}.s3.access-key-id": cfg.storage.root_user,
         f"spark.sql.catalog.{catalog}.s3.secret-access-key": cfg.storage.root_password.get_secret_value(),
+        # AWS SDK v2 (used by S3FileIO via iceberg-aws-bundle) requires a region
+        # even for MinIO. Without it the SDK probes EC2 metadata and fails.
+        f"spark.sql.catalog.{catalog}.s3.region": cfg.storage.region,
+        f"spark.sql.catalog.{catalog}.client.region": cfg.storage.region,
         # S3A / MinIO credentials for Hadoop filesystem
         "spark.hadoop.fs.s3a.endpoint": cfg.storage.endpoint,
         "spark.hadoop.fs.s3a.access.key": cfg.storage.root_user,
@@ -96,6 +122,18 @@ def _build_spark_iceberg_conf() -> dict[str, str]:
         # Iceberg extensions
         "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
         "spark.sql.defaultCatalog": catalog,
+        # Memory-pressure tuning for local[*] / local[N] dev runs that parse
+        # the full Bronze match_data table:
+        #
+        #   maxPartitionBytes — splits each Parquet file into <=32 MB scan
+        #   tasks so a single task never loads more than ~150 MB of
+        #   decompressed raw_json into the heap.
+        #
+        #   shuffle.partitions — Spark's default is 200, which is wasteful
+        #   for our 21k-row dedup. Fewer/larger shuffle outputs reduce
+        #   coordination overhead without changing per-task memory.
+        "spark.sql.files.maxPartitionBytes": str(spark_cfg.max_partition_bytes),
+        "spark.sql.shuffle.partitions": str(spark_cfg.shuffle_partitions),
     }
 
 
@@ -166,7 +204,7 @@ class PolarsIcebergReader:
 
         Example:
             df = reader.read_table(
-                TableName.bronze("match_documents"),
+                TableName.bronze("match_data"),
                 columns=["match_id", "_snapshot_date", "raw_json"],
                 row_filter="match_type = 'T20'",
             )
@@ -221,7 +259,7 @@ class PolarsIcebergReader:
 
         Example:
             df = reader.read_incremental(
-                TableName.bronze("match_documents"),
+                TableName.bronze("match_data"),
                 since="2024-11-01",
             )
         """
@@ -377,8 +415,8 @@ class SparkIcebergReader:
         Example:
             df = reader.read_sql('''
                 SELECT d.*, p.identifier as player_key
-                FROM cricket.silver.deliveries d
-                JOIN cricket.silver.persons p
+                FROM silver.deliveries d
+                JOIN silver.persons p
                   ON d.batter = p.cricsheet_name
                 WHERE d.match_type = 'T20'
             ''')
@@ -449,14 +487,14 @@ class DuckDBIcebergReader:
 
         Args:
             iceberg_path: S3 path to the Iceberg table root
-                          e.g. "s3://iceberg-warehouse/gold/fact_delivery/"
+                          e.g. "s3://cricket-lakehouse/gold/fact_delivery/"
             columns:      Column projection (None = all)
             where:        SQL WHERE clause
             limit:        Row limit
 
         Example:
             df = reader.read_table(
-                "s3://iceberg-warehouse/gold/fact_delivery/",
+                "s3://cricket-lakehouse/gold/fact_delivery/",
                 columns=["match_id", "batter", "runs_batter"],
                 where="season = '2024' AND match_type = 'T20'",
                 limit=10000,

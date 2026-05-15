@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Infrastructure
+make build-airflow   # Build custom Airflow image (Java + PySpark baked in) — run once after clone or Dockerfile change
 make up              # Start all services (requires .env — copy from .env.example)
 make down            # Stop all services
 make bootstrap       # Create MinIO buckets + run PostgreSQL control schema DDL
@@ -28,10 +29,16 @@ poetry run pre-commit run --all-files
 # resolve import-sort errors reported by ruff. Run isort separately only if needed.
 
 # Manual pipeline run (dev, no Airflow needed)
-poetry run python -m cip.ingestion.jobs.ingest_cricsheet_register --task all
-poetry run python -m cip.ingestion.jobs.ingest_cricsheet_register --snapshot-date 2026-05-11 --task download
-poetry run python -m cip.ingestion.jobs.ingest_cricsheet_register --snapshot-date 2026-05-10 --task bronze --force
-poetry run python -m cip.ingestion.jobs.ingest_cricsheet_register --snapshot-date 2026-05-11 --task silver
+# People & Names — Landing → Bronze
+poetry run python -m cip.ingestion.jobs.ingest_people_and_names --task all
+poetry run python -m cip.ingestion.jobs.ingest_people_and_names --snapshot-date 2026-05-11 --task download
+poetry run python -m cip.ingestion.jobs.ingest_people_and_names --snapshot-date 2026-05-10 --task bronze --force
+# People & Names — Bronze → Silver + DQ
+poetry run python -m cip.ingestion.jobs.build_silver_people_and_names --task all
+poetry run python -m cip.ingestion.jobs.build_silver_people_and_names --snapshot-date 2026-05-11 --task silver
+poetry run python -m cip.ingestion.jobs.build_silver_people_and_names --snapshot-date 2026-05-11 --task dq
+# Match data — All match data Silver build
+ICEBERG_REST_URI=http://localhost:8181 MINIO_S3_ENDPOINT=http://localhost:9000 POSTGRES_HOST=localhost SPARK_DRIVER_MEMORY=8g SPARK_MASTER=local[2] poetry run python -m cip.ingestion.jobs.build_silver_match_data --snapshot-date 2026-05-01 --task all
 ```
 
 Line length is 120 for ruff, black, and isort.
@@ -44,10 +51,11 @@ This is a cricket data lakehouse — a **medallion architecture** (Landing → B
 
 | Layer | Storage | Engine | Description |
 |-------|---------|--------|-------------|
-| Landing | MinIO (`cricket-landing`) | — | Raw downloads, never modified |
-| Bronze | Iceberg (`iceberg-warehouse/bronze/`) | Polars + PyIceberg | All-string ingestion, source-faithful |
-| Silver | Iceberg (`iceberg-warehouse/silver/`) | PySpark | Typed, exploded, deduplicated |
-| Gold | Iceberg + DuckDB | dbt | Star schema dims/facts/marts |
+| Source files | MinIO (`cricket-source-files`) | — | Raw downloads (ZIPs, CSVs, extracted JSONs), never modified |
+| Bronze | Iceberg (`cricket-lakehouse/bronze/`) | Polars + PyIceberg | All-string ingestion, source-faithful |
+| Silver | Iceberg (`cricket-lakehouse/silver/`) | PySpark + Polars | Typed, exploded, deduplicated |
+| Gold | Iceberg (`cricket-lakehouse/gold/`) + DuckDB | dbt | Star schema dims/facts/marts |
+| ML models | MinIO (`cricket-ml-models`) | MLflow | Trained models, run artifacts |
 | Control | PostgreSQL (`control` schema) | psycopg2 | Audit logs, DQ results, schema versions |
 
 ### Key source data
@@ -142,7 +150,7 @@ Every pipeline task guards against re-runs via `control.register_ingestion_log` 
 - **`SparkIcebergWriter.dynamic_overwrite()`** — standard write mode for Silver PySpark jobs (Match pipeline). Accepts optional `partition_cols`; auto-creates the table via `_ensure_table_exists()` on first run, then overwrites only the partitions present in the DataFrame.
 - Both writers call `_inject_meta_polars`/`_inject_meta_spark` to stamp mandatory `_snapshot_date`, `_ingested_at`, `_pipeline_run_id`, `_row_hash`, `_source_file`, `_source_url` columns.
 
-**Silver Register uses Polars, not PySpark.** `task_load_silver` in `ingest_cricsheet_register.py` instantiates `PolarsRegisterSilverTransform` (from `transform/polars/silver/persons.py`). PySpark is not required for the Register pipeline.
+**Silver Register uses Polars, not PySpark.** `task_load_silver` in `ingest_people_and_names.py` instantiates `PolarsRegisterSilverTransform` (from `transform/polars/silver/persons.py`). PySpark is not required for the Register pipeline.
 
 **Spark JAR packages:** `_build_spark_iceberg_conf()` in `readers.py` injects `spark.jars.packages` with the Iceberg runtime + `hadoop-aws` + `aws-java-sdk-bundle`. These are downloaded from Maven Central on first run (requires internet). Versions are controlled by `SparkSettings.iceberg_version`, `.hadoop_aws_version`, `.aws_java_sdk_version` (via env or conf/base/spark.yaml). The catalog config also sets `s3.access-key-id` / `s3.secret-access-key` directly on the Iceberg catalog (not only the Hadoop `fs.s3a.*` keys) — both are required.
 

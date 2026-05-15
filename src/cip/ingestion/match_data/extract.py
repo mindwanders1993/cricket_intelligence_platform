@@ -1,7 +1,7 @@
-# src/cip/ingestion/cricsheet/extract.py
+# src/cip/ingestion/match_data/extract.py
 #
-# Extracts JSON files from the Cricsheet ZIP archive in MinIO landing and
-# re-uploads each JSON file to the extracted_json prefix.
+# Extracts JSON files from the Cricsheet ZIP archive in MinIO source-files
+# bucket and re-uploads each JSON file to the match_data/json prefix.
 #
 # Idempotency:
 #   Skips if control.archive_download_log shows extracted_path IS NOT NULL
@@ -21,8 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cip.common.logging import get_logger
-from cip.ingestion.cricsheet.checksum import sha256_bytes
-from cip.ingestion.cricsheet.manifest import (
+from cip.ingestion.match_data.checksum import sha256_bytes
+from cip.ingestion.match_data.manifest import (
     ExtractionManifest,
     ManifestEntry,
     write_manifest,
@@ -32,7 +32,7 @@ from cip.ingestion.io.minio import MinIOClient
 logger = get_logger(__name__)
 
 _ARCHIVE_FILE = "all_json.zip"
-_DAG_ID = "dag_ingest_cricsheet_archives"
+_DAG_ID = "dag_ingest_match_data"
 _MAX_WORKERS = 20
 
 
@@ -45,10 +45,10 @@ class ExtractionResult:
     manifest: ExtractionManifest
 
 
-class ArchiveExtractor:
+class MatchDataExtractor:
     """
-    Downloads the ZIP from MinIO landing, extracts all .json files,
-    and uploads each to the extracted_json prefix.
+    Downloads the ZIP from the source-files bucket, extracts all .json files,
+    and uploads each to the match_data/json prefix.
 
     After upload, writes a _manifest.json for downstream verification
     and updates control.archive_download_log with the extraction path
@@ -60,7 +60,7 @@ class ArchiveExtractor:
         self._pg_dsn = pg_dsn
 
     @classmethod
-    def from_settings(cls) -> "ArchiveExtractor":
+    def from_settings(cls) -> "MatchDataExtractor":
         from cip.common.settings import get_settings
 
         cfg = get_settings()
@@ -74,7 +74,7 @@ class ArchiveExtractor:
         force: bool = False,
     ) -> ExtractionResult:
         """
-        Extract JSON files from the landing ZIP to extracted_json prefix.
+        Extract JSON files from the source-files ZIP to the match_data/json prefix.
 
         Args:
             snapshot_date:   ISO date — Hive partition key.
@@ -102,9 +102,9 @@ class ArchiveExtractor:
 
         log_id = self._get_log_id(snapshot_date)
         cfg_storage = self._get_storage_cfg()
-        landing_bucket = cfg_storage.bucket_landing
-        zip_key = f"raw_zips/snapshot_date={snapshot_date}/{_ARCHIVE_FILE}"
-        extracted_prefix = f"s3://{landing_bucket}/extracted_json/snapshot_date={snapshot_date}/"
+        source_files_bucket = cfg_storage.bucket_source_files
+        zip_key = f"match_data/zip/snapshot_date={snapshot_date}/{_ARCHIVE_FILE}"
+        extracted_prefix = f"s3://{source_files_bucket}/match_data/json/snapshot_date={snapshot_date}/"
 
         started = time.monotonic()
         logger.info(
@@ -118,12 +118,12 @@ class ArchiveExtractor:
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             local_zip = Path(tmp_dir) / _ARCHIVE_FILE
-            self._minio.download_file(landing_bucket, zip_key, local_zip)
+            self._minio.download_file(source_files_bucket, zip_key, local_zip)
 
             entries, failed = self._extract_and_upload(
                 local_zip=local_zip,
                 snapshot_date=snapshot_date,
-                landing_bucket=landing_bucket,
+                source_files_bucket=source_files_bucket,
             )
 
         if failed:
@@ -170,7 +170,7 @@ class ArchiveExtractor:
         self,
         local_zip: Path,
         snapshot_date: str,
-        landing_bucket: str,
+        source_files_bucket: str,
     ) -> tuple[list[ManifestEntry], list[str]]:
         """
         Open the ZIP and upload each .json file via ThreadPoolExecutor.
@@ -185,11 +185,11 @@ class ArchiveExtractor:
         failed: list[str] = []
 
         def _upload_one(file_name: str, content: bytes) -> ManifestEntry | None:
-            key = f"extracted_json/snapshot_date={snapshot_date}/{Path(file_name).name}"
+            key = f"match_data/json/snapshot_date={snapshot_date}/{Path(file_name).name}"
             try:
                 self._minio.upload_bytes(
                     data=content,
-                    bucket=landing_bucket,
+                    bucket=source_files_bucket,
                     key=key,
                     content_type="application/json",
                 )
@@ -283,6 +283,6 @@ class ArchiveExtractor:
             conn.commit()
 
     def _read_existing_manifest(self, snapshot_date: str) -> ExtractionManifest:
-        from cip.ingestion.cricsheet.manifest import read_manifest
+        from cip.ingestion.match_data.manifest import read_manifest
 
         return read_manifest(self._minio, snapshot_date)

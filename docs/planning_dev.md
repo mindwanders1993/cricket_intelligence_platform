@@ -27,9 +27,9 @@ poetry run black --exclude ".claude/" .                        # format
 # Run ruff --fix AFTER black to resolve I001 conflicts
 
 # Manual pipeline run (no Airflow needed)
-poetry run python -m cip.ingestion.jobs.ingest_cricsheet_register --task all
-poetry run python -m cip.ingestion.jobs.ingest_cricsheet_register --snapshot-date 2026-05-11 --task download
-poetry run python -m cip.ingestion.jobs.ingest_cricsheet_register --snapshot-date 2026-05-11 --task bronze --force
+poetry run python -m cip.ingestion.jobs.ingest_people_and_names --task all
+poetry run python -m cip.ingestion.jobs.ingest_people_and_names --snapshot-date 2026-05-11 --task download
+poetry run python -m cip.ingestion.jobs.ingest_people_and_names --snapshot-date 2026-05-11 --task bronze --force
 
 # Airflow DAG validation
 make dag-validate
@@ -55,7 +55,7 @@ ingestion/
     normalize.py      → RegisterNormalizer.from_settings().run(snapshot_date, pipeline_run_id)
     parse.py          → RegisterParser.parse(normalized) → ParsedRegister
   jobs/
-    ingest_cricsheet_register.py → task_download_and_land(), task_load_bronze()  (Airflow callables)
+    ingest_people_and_names.py → task_download_and_land(), task_load_bronze()  (Airflow callables)
 
 transform/
   polars/bronze/

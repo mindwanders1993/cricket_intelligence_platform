@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import polars as pl
 import pytest
 
-from cip.quality.checks.register_dq import DQBlockingFailureError
+from cip.quality.checks.people_and_names_dq import DQBlockingFailureError
 
 _SNAPSHOT = "2026-05-01"
 _RUN_ID = "dq-test-run"
@@ -84,22 +84,26 @@ class TestCheckUniqueGrain:
         return checker._check_unique_grain(df)
 
     def test_passes_on_unique_grain(self):
-        df = _bronze_df([
-            {"match_id": "a", "revision": "1"},
-            {"match_id": "b", "revision": "1"},
-            {"match_id": "a", "revision": "2"},
-        ])
+        df = _bronze_df(
+            [
+                {"match_id": "a", "revision": "1"},
+                {"match_id": "b", "revision": "1"},
+                {"match_id": "a", "revision": "2"},
+            ]
+        )
         result = self._check(df)
         assert result.status == "PASSED"
         assert result.severity == "BLOCK"
         assert result.check_id == "MAT-BRZ-002"
 
     def test_fails_on_duplicate_grain(self):
-        df = _bronze_df([
-            {"match_id": "a", "revision": "1"},
-            {"match_id": "a", "revision": "1"},  # duplicate
-            {"match_id": "b", "revision": "1"},
-        ])
+        df = _bronze_df(
+            [
+                {"match_id": "a", "revision": "1"},
+                {"match_id": "a", "revision": "1"},  # duplicate
+                {"match_id": "b", "revision": "1"},
+            ]
+        )
         result = self._check(df)
         assert result.status == "FAILED"
         assert result.failure_row_count == 1
@@ -163,10 +167,12 @@ class TestCheckMetadataCoverage:
         return pl.DataFrame(rows, schema=schema)
 
     def test_passes_when_all_metadata_present(self):
-        df = self._make_df([
-            {"match_id": "a", "match_type": "T20", "gender": "male", "team_a": "India", "team_b": "Eng"},
-            {"match_id": "b", "match_type": "ODI", "gender": "male", "team_a": "Aus", "team_b": "NZ"},
-        ])
+        df = self._make_df(
+            [
+                {"match_id": "a", "match_type": "T20", "gender": "male", "team_a": "India", "team_b": "Eng"},
+                {"match_id": "b", "match_type": "ODI", "gender": "male", "team_a": "Aus", "team_b": "NZ"},
+            ]
+        )
         result = self._check(df)
         assert result.status == "PASSED"
         assert result.check_id == "MAT-BRZ-004"
@@ -175,8 +181,7 @@ class TestCheckMetadataCoverage:
     def test_warns_when_null_rate_above_threshold(self):
         _schema = {"match_id": pl.Utf8, "match_type": pl.Utf8, "gender": pl.Utf8, "team_a": pl.Utf8, "team_b": pl.Utf8}
         rows = [
-            {"match_id": str(i), "match_type": None, "gender": None, "team_a": None, "team_b": None}
-            for i in range(10)
+            {"match_id": str(i), "match_type": None, "gender": None, "team_a": None, "team_b": None} for i in range(10)
         ]
         df = pl.DataFrame(rows, schema=_schema)
         result = self._check(df)
@@ -225,15 +230,17 @@ class TestRunAll:
         return checker
 
     def _good_df(self):
-        return pl.DataFrame({
-            "match_id": ["a", "b", "c"],
-            "revision": ["1", "1", "1"],
-            "match_type": ["T20", "ODI", "Test"],
-            "gender": ["male", "male", "male"],
-            "team_a": ["India", "Aus", "Eng"],
-            "team_b": ["Eng", "NZ", "SA"],
-            "_snapshot_date": [_SNAPSHOT] * 3,
-        })
+        return pl.DataFrame(
+            {
+                "match_id": ["a", "b", "c"],
+                "revision": ["1", "1", "1"],
+                "match_type": ["T20", "ODI", "Test"],
+                "gender": ["male", "male", "male"],
+                "team_a": ["India", "Aus", "Eng"],
+                "team_b": ["Eng", "NZ", "SA"],
+                "_snapshot_date": [_SNAPSHOT] * 3,
+            }
+        )
 
     def test_all_pass_returns_summary(self):
         df = self._good_df()
@@ -262,15 +269,17 @@ class TestRunAll:
         checker._persist_results.assert_called_once()
 
     def test_persist_called_even_on_failure(self):
-        df = pl.DataFrame({
-            "match_id": ["a", "a"],
-            "revision": ["1", "1"],  # duplicate → MAT-BRZ-002 FAILED
-            "match_type": ["T20", "T20"],
-            "gender": ["male", "male"],
-            "team_a": ["India", "India"],
-            "team_b": ["Eng", "Eng"],
-            "_snapshot_date": [_SNAPSHOT, _SNAPSHOT],
-        })
+        df = pl.DataFrame(
+            {
+                "match_id": ["a", "a"],
+                "revision": ["1", "1"],  # duplicate → MAT-BRZ-002 FAILED
+                "match_type": ["T20", "T20"],
+                "gender": ["male", "male"],
+                "team_a": ["India", "India"],
+                "team_b": ["Eng", "Eng"],
+                "_snapshot_date": [_SNAPSHOT, _SNAPSHOT],
+            }
+        )
         log = {"files_attempted": 2, "files_succeeded": 2, "files_failed": 0}
         manifest = {"file_count": 2}
 

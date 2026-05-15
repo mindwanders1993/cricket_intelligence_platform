@@ -15,8 +15,8 @@ Paste the block below into a `gemini` session opened at the project root.
 @src/cip/transform/shared/readers.py
 @src/cip/quality/checks/match_bronze_dq.py
 @src/cip/quality/checks/register_dq.py
-@orchestration/airflow/dags/dag_ingest_cricsheet_archives.py
-@orchestration/airflow/dags/dag_ingest_cricsheet_register.py
+@orchestration/airflow/dags/dag_ingest_all_match_data.py
+@orchestration/airflow/dags/dag_ingest_people_and_names.py
 
 You are helping design Big Task 5 — the PySpark Silver pipeline for Cricsheet match data.
 

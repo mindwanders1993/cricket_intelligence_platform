@@ -1,10 +1,10 @@
-# src/cip/transform/polars/bronze/match_documents.py
+# src/cip/transform/polars/bronze/match_data.py
 #
 # Bronze loader for Cricsheet match JSON documents.
 #
 # Reads all extracted JSON files for a snapshot from the MinIO landing zone,
 # parses the minimal header fields, attaches a revision number, and appends
-# to cricket.bronze.match_documents via PolarsIcebergWriter.
+# to bronze.match_data via PolarsIcebergWriter.
 #
 # Schema (all columns are strings — Bronze rule):
 #   match_id, revision, match_type, gender, season, match_date,
@@ -41,12 +41,17 @@ from cip.transform.shared.writers import PolarsIcebergWriter
 
 logger = get_logger(__name__)
 
-_TABLE = TableName.bronze("match_documents")
+_TABLE = TableName.bronze("match_data")
 _PARTITION_COL = META.SNAPSHOT_DATE
 _ARCHIVE_FILE = "all_json.zip"
 _SOURCE_URL = "https://cricsheet.org/downloads/all_json.zip"
-_DAG_ID = "dag_ingest_cricsheet_archives"
+_DAG_ID = "dag_ingest_match_data"
 _MAX_WORKERS = 20
+# Number of JSON files processed (read + parse + write) per Iceberg append batch.
+# Keeps peak memory bounded — the full 21k-file run would otherwise materialise
+# every match's raw_json (~1 GB+ of strings) in memory at once and OOM small
+# Airflow workers.
+_BATCH_SIZE = 2000
 
 
 @dataclass
@@ -63,7 +68,7 @@ class MatchLoadResult:
 
 class MatchBronzeLoader:
     """
-    Reads extracted JSON files from MinIO and writes to cricket.bronze.match_documents.
+    Reads extracted JSON files from MinIO and writes to bronze.match_data.
 
     Two modes:
         load()     — append, with idempotency guard (default)
@@ -104,7 +109,7 @@ class MatchBronzeLoader:
         force: bool = False,
     ) -> MatchLoadResult:
         """
-        Load extracted JSON files into cricket.bronze.match_documents.
+        Load extracted JSON files into bronze.match_data.
 
         Args:
             snapshot_date:        ISO date — partition key.
@@ -188,37 +193,52 @@ class MatchBronzeLoader:
             extra={"file_count": files_attempted, "snapshot_date": snapshot_date},
         )
 
-        records, failed_files = self._read_json_files(json_files)
         existing_revisions = self._fetch_existing_revisions()
-        rows = self._attach_revisions(records, existing_revisions)
 
-        if not rows:
+        total_succeeded = 0
+        total_failed_keys: list[str] = []
+        total_rows_written = 0
+
+        for batch_start in range(0, files_attempted, _BATCH_SIZE):
+            batch = json_files[batch_start : batch_start + _BATCH_SIZE]
+            batch_num = batch_start // _BATCH_SIZE + 1
+            total_batches = (files_attempted + _BATCH_SIZE - 1) // _BATCH_SIZE
+
+            logger.info(
+                "Processing batch",
+                extra={
+                    "batch": f"{batch_num}/{total_batches}",
+                    "batch_size": len(batch),
+                    "files_processed_so_far": batch_start,
+                },
+            )
+
+            records, failed_files = self._read_json_files(batch)
+            total_succeeded += len(records)
+            total_failed_keys.extend(failed_files)
+
+            if records:
+                rows = self._attach_revisions(records, existing_revisions)
+                df = pl.DataFrame(rows, schema=_bronze_schema())
+                rows_written = self._writer.create_and_append(
+                    df=df,
+                    fqn=_TABLE,
+                    snapshot_date=snapshot_date,
+                    layer=Layer.BRONZE,
+                    partition_cols=[_PARTITION_COL],
+                    pipeline_run_id=pipeline_run_id,
+                    source_file=_ARCHIVE_FILE,
+                    source_url=_SOURCE_URL,
+                )
+                total_rows_written += rows_written
+                # Drop large refs so GC can reclaim before the next batch loads.
+                del records, rows, df
+
+        if total_succeeded == 0:
             logger.warning(
-                "No rows parsed — skipping Iceberg write",
+                "No rows parsed — Iceberg write skipped",
                 extra={"snapshot_date": snapshot_date},
             )
-            return MatchLoadResult(
-                snapshot_date=snapshot_date,
-                pipeline_run_id=pipeline_run_id,
-                files_attempted=files_attempted,
-                files_succeeded=0,
-                files_failed=len(failed_files),
-                rows_written=0,
-                duration_seconds=round(time.monotonic() - started, 3),
-                archive_download_id=archive_download_id,
-            )
-
-        df = pl.DataFrame(rows, schema=_bronze_schema())
-        rows_written = self._writer.create_and_append(
-            df=df,
-            fqn=_TABLE,
-            snapshot_date=snapshot_date,
-            layer=Layer.BRONZE,
-            partition_cols=[_PARTITION_COL],
-            pipeline_run_id=pipeline_run_id,
-            source_file=_ARCHIVE_FILE,
-            source_url=_SOURCE_URL,
-        )
 
         duration = round(time.monotonic() - started, 3)
 
@@ -227,9 +247,9 @@ class MatchBronzeLoader:
             extra={
                 "snapshot_date": snapshot_date,
                 "files_attempted": files_attempted,
-                "files_succeeded": len(records),
-                "files_failed": len(failed_files),
-                "rows_written": rows_written,
+                "files_succeeded": total_succeeded,
+                "files_failed": len(total_failed_keys),
+                "rows_written": total_rows_written,
                 "duration_seconds": duration,
             },
         )
@@ -238,36 +258,41 @@ class MatchBronzeLoader:
             snapshot_date=snapshot_date,
             pipeline_run_id=pipeline_run_id,
             files_attempted=files_attempted,
-            files_succeeded=len(records),
-            files_failed=len(failed_files),
-            rows_written=rows_written,
+            files_succeeded=total_succeeded,
+            files_failed=len(total_failed_keys),
+            rows_written=total_rows_written,
             duration_seconds=duration,
             archive_download_id=archive_download_id,
         )
 
     def _list_json_files(self, snapshot_date: str) -> list:
-        """Return S3ObjectMeta list for all JSON files in extracted_json prefix."""
+        """Return S3ObjectMeta list for all match JSON files in the match_data/json prefix.
+
+        Sidecar files starting with `_` (e.g. `_manifest.json`) are excluded —
+        they're internal metadata, not match documents.
+        """
         from cip.common.settings import get_settings
 
         cfg = get_settings().storage
-        prefix = f"extracted_json/snapshot_date={snapshot_date}/"
-        return self._minio.list_objects(
-            bucket=cfg.bucket_landing,
+        prefix = f"match_data/json/snapshot_date={snapshot_date}/"
+        objs = self._minio.list_objects(
+            bucket=cfg.bucket_source_files,
             prefix=prefix,
             suffix_filter=".json",
         )
+        return [o for o in objs if not o.file_name.startswith("_")]
 
     def _read_json_files(self, json_files: list) -> tuple[list[dict], list[str]]:
         """Read and parse JSON files from MinIO with thread pool. Returns (records, failed_keys)."""
         from cip.common.settings import get_settings
 
-        landing_bucket = get_settings().storage.bucket_landing
+        source_files_bucket = get_settings().storage.bucket_source_files
         records: list[dict] = []
         failed: list[str] = []
 
         def _read_one(obj_meta) -> dict | None:
             try:
-                content = self._minio.read_bytes(landing_bucket, obj_meta.key)
+                content = self._minio.read_bytes(source_files_bucket, obj_meta.key)
                 return _parse_json_file(obj_meta.file_name, content)
             except Exception as exc:
                 logger.error(

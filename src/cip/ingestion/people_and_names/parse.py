@@ -1,4 +1,4 @@
-# src/cip/ingestion/register/parse.py
+# src/cip/ingestion/people_and_names/parse.py
 #
 # Parser for Cricsheet Register normalized frames.
 #
@@ -10,14 +10,14 @@
 #   - All inputs and outputs are Polars LazyFrames — no I/O in this module
 #
 # Called by:
-#   src/cip/transform/polars/bronze/register_loader.py
+#   src/cip/transform/polars/bronze/people_and_names_loader.py
 #
 # Usage:
-#   from cip.ingestion.register.parse import RegisterParser
-#   from cip.ingestion.register.normalize import RegisterNormalizer
+#   from cip.ingestion.people_and_names.parse import PeopleAndNamesParser
+#   from cip.ingestion.people_and_names.normalize import PeopleAndNamesNormalizer
 #
-#   normalized = RegisterNormalizer.from_settings().run("2026-05-11", "run-001")
-#   parsed = RegisterParser.parse(normalized)
+#   normalized = PeopleAndNamesNormalizer.from_settings().run("2026-05-11", "run-001")
+#   parsed = PeopleAndNamesParser.parse(normalized)
 #   parsed.persons.collect()
 #   parsed.person_identifiers.collect()
 #   parsed.name_variations.collect()
@@ -29,7 +29,7 @@ from dataclasses import dataclass
 import polars as pl
 
 from cip.common.logging import get_logger
-from cip.ingestion.register.normalize import NormalizedRegister
+from cip.ingestion.people_and_names.normalize import NormalizedPeopleAndNames
 
 logger = get_logger(__name__)
 
@@ -69,9 +69,9 @@ _NAMES_NAME_COL = "name"
 
 
 @dataclass
-class ParsedRegister:
+class ParsedPeopleAndNames:
     """
-    Output of RegisterParser.parse().
+    Output of PeopleAndNamesParser.parse().
 
     Three LazyFrames shaped for Silver layer loading:
 
@@ -98,31 +98,31 @@ class ParsedRegister:
 
 
 # ===========================================================================
-# RegisterParser
+# PeopleAndNamesParser
 # ===========================================================================
 
 
-class RegisterParser:
+class PeopleAndNamesParser:
     """
-    Stateless transformer: NormalizedRegister → ParsedRegister.
+    Stateless transformer: NormalizedPeopleAndNames → ParsedPeopleAndNames.
 
     All methods are classmethods — no instantiation needed.
     No I/O, no side effects.
 
     Usage:
-        parsed = RegisterParser.parse(normalized)
+        parsed = PeopleAndNamesParser.parse(normalized)
     """
 
     @classmethod
-    def parse(cls, normalized: NormalizedRegister) -> ParsedRegister:
+    def parse(cls, normalized: NormalizedPeopleAndNames) -> ParsedPeopleAndNames:
         """
-        Parse a NormalizedRegister into three Silver-shaped LazyFrames.
+        Parse a NormalizedPeopleAndNames into three Silver-shaped LazyFrames.
 
         Args:
-            normalized: Output of RegisterNormalizer.run()
+            normalized: Output of PeopleAndNamesNormalizer.run()
 
         Returns:
-            ParsedRegister with .persons, .person_identifiers, .name_variations
+            ParsedPeopleAndNames with .persons, .person_identifiers, .name_variations
         """
         logger.info(
             "Parsing Register frames",
@@ -146,7 +146,7 @@ class RegisterParser:
             },
         )
 
-        return ParsedRegister(
+        return ParsedPeopleAndNames(
             persons=persons_lf,
             person_identifiers=identifiers_lf,
             name_variations=name_variations_lf,
@@ -311,12 +311,12 @@ class RegisterParser:
         names_df: "pl.DataFrame",
         snapshot_date: str,
         pipeline_run_id: str,
-    ) -> "ParsedRegister":
+    ) -> "ParsedPeopleAndNames":
         """
         Parse directly from two raw Polars DataFrames.
 
         Used by the Airflow task_parse callable when frames are reconstructed
-        from MinIO-staged Parquet. Wraps them in a NormalizedRegister and
+        from MinIO-staged Parquet. Wraps them in a NormalizedPeopleAndNames and
         delegates to the canonical parse() classmethod.
 
         Args:
@@ -327,9 +327,9 @@ class RegisterParser:
         """
         from datetime import datetime, timezone
 
-        from cip.ingestion.register.normalize import NormalizedRegister
+        from cip.ingestion.people_and_names.normalize import NormalizedPeopleAndNames
 
-        normalized = NormalizedRegister(
+        normalized = NormalizedPeopleAndNames(
             people=people_df.lazy(),  # .people not .people_df
             names=names_df.lazy(),  # .names not .names_df
             snapshot_date=snapshot_date,

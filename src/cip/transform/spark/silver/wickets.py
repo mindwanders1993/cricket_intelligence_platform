@@ -1,10 +1,13 @@
-# src/cip/transform/spark/silver/deliveries.py
+# src/cip/transform/spark/silver/wickets.py
 #
-# Silver transform: bronze.match_data → silver.deliveries
+# Silver transform: bronze.match_data → silver.wickets
 #
-# Grain: one row per ball bowled (legal or extra).
-# PK: (match_id, innings_number, over_number, delivery_number).
+# Grain: one row per wicket fallen.
+# PK: (match_id, innings_number, over_number, delivery_number, player_out).
 # Partition: _snapshot_date.
+#
+# IMPORTANT: `player_out` is the authoritative dismissal subject —
+# NOT `batter`.  On run-outs the player_out may be the non-striker.
 
 from __future__ import annotations
 
@@ -20,19 +23,19 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_SILVER_DELIVERIES = TableName.silver("deliveries")
+_SILVER_WICKETS = TableName.silver("wickets")
 
 
-class DeliveriesSilverTransform:
+class WicketsSilverTransform:
     """
-    Builds silver.deliveries by exploding parsed.innings[].overs[].deliveries[].
+    Builds silver.wickets by exploding parsed.innings[].overs[].deliveries[].wickets[].
 
     Edge cases handled:
-        - Wides and no-balls produce delivery rows (they're balls, even if
-          they don't count toward the over).  Caller must inspect
-          extra_wides / extra_noballs to compute legal-ball counts.
-        - delivery_number is 1-indexed within each over (position-based).
-        - is_wicket = True when wickets[] is non-empty.
+        - Run-outs where player_out != batter (we trust player_out).
+        - Substitute fielders preserved via fielders[].substitute (we
+          flatten fielders to an array of names; the boolean flag is
+          dropped in this first pass — fielders[] grain is conserved).
+        - A single delivery may produce two wickets (run-out + caught).
     """
 
     def __init__(self, spark: "SparkSession", writer: "SparkIcebergWriter") -> None:
@@ -42,7 +45,7 @@ class DeliveriesSilverTransform:
     def run(self, bronze_df: "DataFrame", snapshot_date: str, pipeline_run_id: str) -> int:
         from pyspark.sql import functions as F
 
-        # Layer 1: explode innings
+        # Layer 1: innings
         l1 = bronze_df.select(
             "match_id",
             F.posexplode("parsed.innings").alias("innings_idx", "innings"),
@@ -58,7 +61,7 @@ class DeliveriesSilverTransform:
             "_source_url",
         )
 
-        # Layer 2: explode overs
+        # Layer 2: overs
         l2 = l1.select(
             "match_id",
             "innings_number",
@@ -76,39 +79,46 @@ class DeliveriesSilverTransform:
             "_source_url",
         )
 
-        # Layer 3: explode deliveries with position → delivery_number
-        l3 = l2.select(
+        # Layer 3: deliveries (only keep those with wickets[])
+        l3 = (
+            l2.select(
+                "match_id",
+                "innings_number",
+                "over_number",
+                F.posexplode("deliveries_array").alias("delivery_idx", "delivery"),
+                "_bronze_loaded_at",
+                "_source_file",
+                "_source_url",
+            )
+            .withColumn("delivery_number", F.col("delivery_idx") + F.lit(1))
+            .withColumn("wickets_array", F.col("delivery").getField("wickets"))
+            .filter(F.size(F.coalesce(F.col("wickets_array"), F.array())) > 0)
+        )
+
+        # Layer 4: wickets — explode the wickets array
+        l4 = l3.select(
             "match_id",
             "innings_number",
             "over_number",
-            F.posexplode("deliveries_array").alias("delivery_idx", "delivery"),
+            "delivery_number",
+            F.explode("wickets_array").alias("wicket"),
             "_bronze_loaded_at",
             "_source_file",
             "_source_url",
         )
 
-        runs = F.col("delivery").getField("runs")
-        extras = F.col("delivery").getField("extras")
-        wickets = F.col("delivery").getField("wickets")
-
-        df = l3.select(
+        df = l4.select(
             F.col("match_id"),
             F.col("innings_number"),
             F.col("over_number"),
-            (F.col("delivery_idx") + F.lit(1)).alias("delivery_number"),
-            F.col("delivery").getField("batter").alias("batter"),
-            F.col("delivery").getField("bowler").alias("bowler"),
-            F.col("delivery").getField("non_striker").alias("non_striker"),
-            F.coalesce(runs.getField("batter"), F.lit(0)).alias("runs_batter"),
-            F.coalesce(runs.getField("extras"), F.lit(0)).alias("runs_extras"),
-            F.coalesce(runs.getField("total"), F.lit(0)).alias("runs_total"),
-            runs.getField("non_boundary").alias("runs_non_boundary"),
-            extras.getField("wides").alias("extra_wides"),
-            extras.getField("noballs").alias("extra_noballs"),
-            extras.getField("byes").alias("extra_byes"),
-            extras.getField("legbyes").alias("extra_legbyes"),
-            extras.getField("penalty").alias("extra_penalty"),
-            (F.size(F.coalesce(wickets, F.array())) > 0).alias("is_wicket"),
+            F.col("delivery_number"),
+            F.col("wicket").getField("player_out").alias("player_out"),
+            F.col("wicket").getField("kind").alias("kind"),
+            # Flatten fielders[] structs → array<string> of fielder names.
+            F.transform(
+                F.coalesce(F.col("wicket").getField("fielders"), F.array()),
+                lambda fielder: fielder.getField("name"),
+            ).alias("fielders"),
             F.col("_bronze_loaded_at"),
             F.col("_source_file"),
             F.col("_source_url"),
@@ -117,11 +127,11 @@ class DeliveriesSilverTransform:
         row_count = df.count()
         self._writer.dynamic_overwrite(
             df=df,
-            fqn=_SILVER_DELIVERIES,
+            fqn=_SILVER_WICKETS,
             snapshot_date=snapshot_date,
             pipeline_run_id=pipeline_run_id,
             source_file="all_json.zip",
             partition_cols=["_snapshot_date"],
         )
-        logger.info("silver.deliveries written", extra={"rows": row_count, "snapshot_date": snapshot_date})
+        logger.info("silver.wickets written", extra={"rows": row_count, "snapshot_date": snapshot_date})
         return row_count

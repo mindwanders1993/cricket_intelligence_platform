@@ -1,4 +1,4 @@
-"""Unit tests for RegisterSilverTransform."""
+"""Unit tests for PeopleAndNamesSilverTransform."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from cip.transform.spark.silver.persons import (
     _SILVER_NAME_VARIATIONS,
     _SILVER_PERSON_IDENTIFIERS,
     _SILVER_PERSONS,
-    RegisterSilverTransform,
+    PeopleAndNamesSilverTransform,
     SilverRegisterResult,
 )
 
@@ -35,11 +35,11 @@ def _make_spark_df(columns: list[str], rows: int = 3) -> MagicMock:
     return df
 
 
-def _make_transform() -> tuple[RegisterSilverTransform, MagicMock, MagicMock]:
+def _make_transform() -> tuple[PeopleAndNamesSilverTransform, MagicMock, MagicMock]:
     """Return (transform, mock_spark, mock_writer)."""
     spark = MagicMock()
     writer = MagicMock()
-    transform = RegisterSilverTransform(spark=spark, writer=writer)
+    transform = PeopleAndNamesSilverTransform(spark=spark, writer=writer)
     return transform, spark, writer
 
 
@@ -65,14 +65,14 @@ class TestSilverRegisterResult:
 
 class TestTableNameConstants:
     def test_bronze_source_fqns(self):
-        assert _BRONZE_PEOPLE == "cricket.bronze.register_people"
-        assert _BRONZE_IDENTIFIERS == "cricket.bronze.register_identifiers"
-        assert _BRONZE_NAME_VARIATIONS == "cricket.bronze.register_name_variations"
+        assert _BRONZE_PEOPLE == "bronze.people"
+        assert _BRONZE_IDENTIFIERS == "bronze.people_identifiers"
+        assert _BRONZE_NAME_VARIATIONS == "bronze.name_variations"
 
     def test_silver_target_fqns(self):
-        assert _SILVER_PERSONS == "cricket.silver.persons"
-        assert _SILVER_PERSON_IDENTIFIERS == "cricket.silver.person_identifiers"
-        assert _SILVER_NAME_VARIATIONS == "cricket.silver.name_variations"
+        assert _SILVER_PERSONS == "silver.persons"
+        assert _SILVER_PERSON_IDENTIFIERS == "silver.person_identifiers"
+        assert _SILVER_NAME_VARIATIONS == "silver.name_variations"
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +264,6 @@ class TestRunAll:
         mock_writer = MagicMock()
         # SparkIcebergWriter is imported lazily inside from_spark; patch at source
         with patch("cip.transform.shared.writers.SparkIcebergWriter.from_spark", return_value=mock_writer):
-            transform = RegisterSilverTransform.from_spark(spark)
+            transform = PeopleAndNamesSilverTransform.from_spark(spark)
         assert transform._spark is spark
         assert transform._writer is mock_writer
