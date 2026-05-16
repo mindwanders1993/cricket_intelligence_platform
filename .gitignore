@@ -52,6 +52,12 @@ webserver_config.py
 target/
 dbt_packages/
 logs/dbt.log
+# dbt auto-generated local user identity — not part of project config
+models/dbt/profiles/.user.yml
+
+# Exploration outputs — keep validation_queries.sql, ignore everything else
+analysis/charts/
+analysis/.DS_Store
 
 mlruns/
 

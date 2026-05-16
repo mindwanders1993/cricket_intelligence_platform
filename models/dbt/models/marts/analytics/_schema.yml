@@ -1,0 +1,72 @@
+version: 2
+
+models:
+  - name: mart_player_batting
+    description: "Batting aggregates per player × match_type × season"
+    columns:
+      - name: person_id
+        tests:
+          - not_null
+      - name: match_type
+        tests:
+          - not_null
+
+  - name: mart_player_bowling
+    description: "Bowling aggregates per bowler × match_type × season"
+    columns:
+      - name: person_id
+        tests:
+          - not_null
+      - name: match_type
+        tests:
+          - not_null
+
+  - name: mart_team_performance
+    description: "Win/loss record per team × match_type × season"
+    columns:
+      - name: team
+        tests:
+          - not_null
+      - name: match_type
+        tests:
+          - not_null
+
+  - name: mart_venue_dna
+    description: "Venue scoring environment and chasing win rates"
+    columns:
+      - name: venue
+        tests:
+          - not_null
+      - name: match_type
+        tests:
+          - not_null
+
+  - name: mart_phase_scoring
+    description: "Powerplay / middle / death over scoring rates"
+    columns:
+      - name: phase
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["powerplay", "middle", "death"]
+
+  - name: mart_toss_outcome
+    description: "Toss decision and match outcome correlation"
+    columns:
+      - name: toss_decision
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["bat", "field"]
+
+  - name: mart_matchup_analysis
+    description: "Batter vs bowler head-to-head matchup stats (min 6 balls)"
+    columns:
+      - name: batter_person_id
+        tests:
+          - not_null
+      - name: bowler_person_id
+        tests:
+          - not_null

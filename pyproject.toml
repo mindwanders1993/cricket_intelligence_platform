@@ -35,6 +35,7 @@ apache-airflow-client = "^2.9.0"
 
 # Analytics
 duckdb = "^1.0.0"
+dbt-duckdb = ">=1.8.0,<2.0.0"
 
 # Logging
 structlog = "^24.0.0"
@@ -52,6 +53,8 @@ mypy = "^1.9.0"
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.7.0"
 graphifyy = "^0.7.13"
+matplotlib = "^3.10.9"
+pandas = "^3.0.3"
 
 [tool.ruff]
 line-length = 120

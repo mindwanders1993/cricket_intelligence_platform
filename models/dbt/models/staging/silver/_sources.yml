@@ -1,0 +1,31 @@
+version: 2
+
+sources:
+  - name: silver
+    schema: silver
+    description: "Silver Iceberg tables exposed as DuckDB views by serving/duckdb/refresh.py"
+    tables:
+      - name: matches
+        description: "One row per match — metadata, teams, venue, toss, outcome"
+      - name: innings
+        description: "One row per innings per match"
+      - name: deliveries
+        description: "One row per ball bowled — the primary analytical grain"
+      - name: wickets
+        description: "One row per dismissal event"
+      - name: teams
+        description: "Distinct teams observed across all matches"
+      - name: venues
+        description: "Distinct venues observed across all matches"
+      - name: competitions
+        description: "Distinct competition names observed across all matches"
+      - name: persons
+        description: "Canonical player/official identity from the Cricsheet Register"
+      - name: person_identifiers
+        description: "Cross-site identifier mappings (cricinfo, espn, cricbuzz, wikidata, …)"
+      - name: name_variations
+        description: "Known name variants per person — used for fuzzy identity resolution"
+      - name: match_players
+        description: "Player roster per match — links player_name to person_id"
+      - name: match_officials
+        description: "Officials per match — umpires, referees, scorers"

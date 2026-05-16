@@ -21,7 +21,9 @@ services:
       - ../../orchestration/airflow/plugins:/opt/airflow/plugins
       - ../../src:/opt/airflow/src
       - ../../conf:/opt/airflow/conf
+      - ../../models:/opt/airflow/models
       - airflow_logs:/opt/airflow/logs
+      - ../../storage:/opt/airflow/storage
 
   airflow-scheduler:
     build:
@@ -36,7 +38,9 @@ services:
       - ../../orchestration/airflow/plugins:/opt/airflow/plugins
       - ../../src:/opt/airflow/src
       - ../../conf:/opt/airflow/conf
+      - ../../models:/opt/airflow/models
       - airflow_logs:/opt/airflow/logs
+      - ../../storage:/opt/airflow/storage
 
   # ---------------------------------------------------------------------------
   # MinIO bucket bootstrapper — runs once, creates all required buckets/prefixes.
@@ -126,3 +130,4 @@ volumes:
   postgres_data:
   pgadmin_data:
   mlflow_data:
+  # cricket_storage removed — now a bind mount at ../../storage so DuckDB is host-accessible
