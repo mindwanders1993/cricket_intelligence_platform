@@ -10,6 +10,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "F=$(python3 -c \"import json,sys; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('file_path') or d.get('tool_response',{}).get('filePath',''))\" 2>/dev/null || true); case \"$F\" in *.py) poetry run graphify update . >/dev/null 2>&1 ;; esac",
+            "async": true
+          }
+        ]
+      }
     ]
   }
 }

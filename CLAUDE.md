@@ -107,6 +107,21 @@ make duckdb-stop   # release the file lock BEFORE running dag_run_gold_dbt_model
 
 Line length is 120 for ruff, black, and isort.
 
+## Project skills
+
+User-invocable workflows in `.claude/skills/` — type `/<name>` to trigger. Each skill's `SKILL.md` is the source of truth for what it does and how it composes existing scripts/jobs.
+
+| Skill | Purpose |
+|---|---|
+| `/cip-pipeline-run` | Run any of the 4 ingest/Silver jobs locally with the right env-var profile (Polars vs Spark). Maps natural language → pipeline + task + date. |
+| `/cip-gold-refresh` | Release the DuckDB UI file lock if held, then rebuild Bronze+Silver DuckDB tables + run `dbt run` + `dbt test`. Hands UI restart back to the user. |
+| `/cip-validate` | Auto-picks `pre-push` / `pre-pr` / `milestone` mode for `validation/run.sh` based on git state. Confirms cost before running milestone (~$1–2). |
+| `/cip-inspect-table` | Uniform inspection of any Bronze/Silver/Gold table — row count, snapshot histogram, schema, sample rows. Bronze/Silver via PyIceberg+Polars; Gold via DuckDB. |
+| `/cip-diagnose-dag` | Pulls task states + filesystem logs + `control.*_ingestion_log` row + landing artifacts for a failed Airflow run; pattern-matches the error against known failure modes. |
+| `/cip-add-silver-table` | Scaffolds a new Bronze→Silver entity across 6 files (naming.py, transform, test, DQ, DAG, job). Stubs only — does not invent transform logic. |
+
+All skills support `--help`. Project-scoped (committed in `.claude/skills/`) so the toolkit travels with the repo.
+
 ## Architecture Overview
 
 This is a cricket data lakehouse — a **medallion architecture** (Landing → Bronze → Silver → Gold) that ingests Cricsheet data, transforms it through layers, and serves it via DuckDB, a FastAPI, and an AI assistant.
