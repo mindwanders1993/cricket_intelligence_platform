@@ -19,6 +19,62 @@ This file provides foundational mandates and project context for Gemini CLI when
 - **Data Quality:** Adhere to the 31-check DQ framework (Landing, Bronze, Silver).
 - **Idempotency:** All jobs must be idempotent, guarding via `control` schema logs in PostgreSQL.
 - **Type Safety:** All Bronze columns are ingested as strings (`infer_schema_length=0`).
+- **Gold Layer:** Star schema materialized in DuckDB for serving and Iceberg for persistence. Filter by `MAX(_snapshot_date)` when consuming.
+
+## Working agreement (Karpathy skills)
+
+Behavioural guardrails for agent-assisted edits in this repo. Adapted from [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills). These bias toward caution over speed — use judgement on trivial tasks.
+
+### 1. Think before coding
+*Don't assume. Don't hide confusion. Surface tradeoffs.*
+
+- State assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them — don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+*Applied here:* Data-pipeline invariants (grain, partition keys, snapshot semantics) are easy to assume wrong. Before writing a JOIN against a Silver table, verify the right-side key is actually unique at that grain. Multi-wicket deliveries broke `fact_delivery` exactly this way — a 30-second "is this key unique?" check would have caught it.
+
+### 2. Simplicity first
+*Minimum code that solves the problem. Nothing speculative.*
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+- Sanity check: *"Would a senior engineer say this is overcomplicated?"*
+
+*Applied here:* Writers are intentionally thin (`PolarsIcebergWriter`, `SparkIcebergWriter`). Don't wrap PyIceberg/Spark calls in defensive try/except for exceptions that can't fire. Don't introduce a Pydantic model for a one-shot DAG payload — XCom takes plain dicts. Don't add a `force` flag to functions that already get one from upstream.
+
+### 3. Surgical changes
+*Touch only what you must. Clean up only your own mess.*
+
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it — don't delete it.
+- Remove imports/variables/functions YOUR changes made unused; don't remove pre-existing dead code unless asked.
+- The test: every changed line should trace directly to the user's request.
+
+*Applied here:* This is a contract graph (Bronze → Silver → Gold → DuckDB → dbt → validation). An "improvement" to `naming.py`, `META`, or a writer signature can silently break every downstream consumer. Keep changes local to the task; raise concerns about adjacent code in chat rather than editing it.
+
+### 4. Goal-driven execution
+*Define success criteria. Loop until verified.*
+
+Transform vague tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, write a brief plan with a verify-check per step.
+
+*Applied here:* This repo already has strong verify-loops — use them as success criteria up front, not as afterthoughts:
+- Gold/dbt change → success = `poetry run dbt test` (40 tests) passes + relevant section of `analysis/validation_queries.sql` returns expected counts.
+- DAG change → success = `make dag-validate` clean + the DAG runs green end-to-end.
+- Bronze/Silver writer change → success = `poetry run pytest tests/unit/transform/` + a real snapshot write to MinIO that reads back correctly.
+
+**These guidelines are working if:** fewer unnecessary lines in diffs, fewer rewrites due to overcomplication, and clarifying questions come *before* implementation rather than after a broken pipeline run.
 
 ## Gemini Graphify
 
@@ -42,6 +98,7 @@ To maintain efficiency in the Gemini CLI:
 
 - `make up` / `make down`: Manage infrastructure services.
 - `make bootstrap`: Initialize MinIO and PostgreSQL.
+- `make duckdb-ui` / `make duckdb-stop`: Manage the DuckDB serving UI.
 - `poetry run pytest`: Run the test suite.
 - `poetry run graphify update .`: Update the knowledge graph.
 

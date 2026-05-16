@@ -1,4 +1,11 @@
 {
+  "general": {
+    "defaultApprovalMode": "plan",
+    "plan": {
+      "enabled": true,
+      "directory": ".gemini/plans"
+    }
+  },
   "hooks": {
     "BeforeTool": [
       {

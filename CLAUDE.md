@@ -2,6 +2,61 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Working agreement (Karpathy skills)
+
+Behavioural guardrails for agent-assisted edits in this repo. Adapted from [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills). These bias toward caution over speed — use judgement on trivial tasks.
+
+### 1. Think before coding
+*Don't assume. Don't hide confusion. Surface tradeoffs.*
+
+- State assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them — don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+*Applied here:* Data-pipeline invariants (grain, partition keys, snapshot semantics) are easy to assume wrong. Before writing a JOIN against a Silver table, verify the right-side key is actually unique at that grain. Multi-wicket deliveries broke `fact_delivery` exactly this way — a 30-second "is this key unique?" check would have caught it.
+
+### 2. Simplicity first
+*Minimum code that solves the problem. Nothing speculative.*
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+- Sanity check: *"Would a senior engineer say this is overcomplicated?"*
+
+*Applied here:* Writers are intentionally thin (`PolarsIcebergWriter`, `SparkIcebergWriter`). Don't wrap PyIceberg/Spark calls in defensive try/except for exceptions that can't fire. Don't introduce a Pydantic model for a one-shot DAG payload — XCom takes plain dicts. Don't add a `force` flag to functions that already get one from upstream.
+
+### 3. Surgical changes
+*Touch only what you must. Clean up only your own mess.*
+
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it — don't delete it.
+- Remove imports/variables/functions YOUR changes made unused; don't remove pre-existing dead code unless asked.
+- The test: every changed line should trace directly to the user's request.
+
+*Applied here:* This is a contract graph (Bronze → Silver → Gold → DuckDB → dbt → validation). An "improvement" to `naming.py`, `META`, or a writer signature can silently break every downstream consumer. Keep changes local to the task; raise concerns about adjacent code in chat rather than editing it.
+
+### 4. Goal-driven execution
+*Define success criteria. Loop until verified.*
+
+Transform vague tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, write a brief plan with a verify-check per step.
+
+*Applied here:* This repo already has strong verify-loops — use them as success criteria up front, not as afterthoughts:
+- Gold/dbt change → success = `poetry run dbt test` (40 tests) passes + relevant section of `analysis/validation_queries.sql` returns expected counts.
+- DAG change → success = `make dag-validate` clean + the DAG runs green end-to-end.
+- Bronze/Silver writer change → success = `poetry run pytest tests/unit/transform/` + a real snapshot write to MinIO that reads back correctly.
+
+**These guidelines are working if:** fewer unnecessary lines in diffs, fewer rewrites due to overcomplication, and clarifying questions come *before* implementation rather than after a broken pipeline run.
+
 ## Commands
 
 ```bash
@@ -39,6 +94,15 @@ poetry run python -m cip.ingestion.jobs.build_silver_people_and_names --snapshot
 poetry run python -m cip.ingestion.jobs.build_silver_people_and_names --snapshot-date 2026-05-11 --task dq
 # Match data — All match data Silver build
 ICEBERG_REST_URI=http://localhost:8181 MINIO_S3_ENDPOINT=http://localhost:9000 POSTGRES_HOST=localhost SPARK_DRIVER_MEMORY=8g SPARK_MASTER=local[2] poetry run python -m cip.ingestion.jobs.build_silver_match_data --snapshot-date 2026-05-01 --task all
+
+# Gold — refresh DuckDB views from Iceberg + run dbt star schema build
+poetry run python -m cip.ingestion.jobs.run_gold_dbt_models   # refresh views + run dbt (used by DAG)
+cd models/dbt && poetry run dbt run                            # dbt build only
+cd models/dbt && poetry run dbt test                           # dbt tests (40 tests)
+
+# DuckDB serving UI (browser at http://localhost:4213)
+make duckdb-ui     # opens the DuckDB built-in web UI on storage/duckdb/cricket.duckdb
+make duckdb-stop   # release the file lock BEFORE running dag_run_gold_dbt_models
 ```
 
 Line length is 120 for ruff, black, and isort.
@@ -197,12 +261,44 @@ DAG files in `orchestration/airflow/dags/` are thin wrappers. All business logic
 
 Every Bronze and Silver Iceberg table carries: `_snapshot_date`, `_ingested_at`, `_pipeline_run_id`, `_dag_run_id`, `_source_file`, `_source_url`, `_row_hash`. Silver/Gold also adds SCD2 columns: `_is_current`, `_valid_from`, `_valid_to`. Use `META.*` constants from `naming.py` — never hardcode column name strings.
 
+### Gold layer (dbt + DuckDB)
+
+dbt project lives at `models/dbt/` (profile `cricket`, target `dev`). The Gold layer is a star schema materialised in **both** DuckDB (for serving) and Iceberg (via the future `bronze`/`silver`/`gold` external materialisations — currently DuckDB-only).
+
+- **Sources** (`models/dbt/models/sources.yml`): Silver Iceberg tables exposed via the `silver` schema in DuckDB.
+- **Staging** (`models/dbt/models/staging/`): one `stg_silver_*` per source — minor renames + type coercion only.
+- **Marts**:
+  - Dimensions (`models/dbt/models/marts/dimensions/`): `dim_match`, `dim_player`, `dim_team`, `dim_venue`, `dim_competition`, `dim_official`.
+  - Facts (`models/dbt/models/marts/facts/`): `fact_delivery`, `fact_innings`, `fact_match_result`, `fact_player_match`.
+  - Marts/aggregates (`models/dbt/models/marts/aggregates/`): batting/bowling career & season summaries.
+
+**`fact_delivery` grain rule:** one row per ball. The wickets and match_players CTEs are deduped with `QUALIFY ROW_NUMBER()` **before** the LEFT JOIN — otherwise multi-wicket deliveries (e.g. caught + non-striker run-out on the same ball) inflate the fact. The wickets dedup prefers bowler-credited kinds (`caught`, `bowled`, `lbw`, `stumped`, `caught and bowled`, `hit wicket`) so the surfaced `dismissal_kind` matches scoring convention.
+
+**`fact_player_match.person_id` is sparse (~1.27%)** — Cricsheet rarely includes registry IDs in match JSONs. No `not_null` test; name-based joins on `dim_player.full_name` close the gap at query time.
+
+### DuckDB serving layer (`src/cip/serving/duckdb/`)
+
+`DuckDBRefresh` (`refresh.py`) materialises **native DuckDB tables** from Iceberg under the `bronze` and `silver` schemas before dbt runs. **Not views** — the DuckDB UI opens fresh connections that don't inherit session-scoped settings like `unsafe_enable_version_guessing`, so Iceberg-scan views fail when queried from the UI. Materialising as tables sidesteps this entirely.
+
+- `create_bronze_views()` / `create_silver_views()` (misnomers — both create TABLES) filter `WHERE _snapshot_date = (SELECT MAX(_snapshot_date) FROM iceberg_scan(...))`. Silver Iceberg accumulates partitions across re-runs; the filter ensures dim/fact PKs stay unique.
+- `_drop_if_view()` handles legacy view-to-table migration by inspecting `information_schema.tables` before dropping (DROP VIEW IF EXISTS is type-strict in DuckDB).
+
+**DuckDB UI workflow (`make duckdb-ui`):** DuckDB has single-writer + multiple-reader semantics, but the UI itself holds a write lock for its `_ui` internal catalog. **Always run `make duckdb-stop` before triggering `dag_run_gold_dbt_models`**, otherwise the DAG's `refresh_duckdb_views` task fails with a file-lock error. Re-launching the UI afterwards is one command.
+
+The DB file lives at `storage/duckdb/cricket.duckdb` (bind-mounted into the Airflow containers via `compose.dev.yml`, so the host CLI and the DAG share the same file). Bind mount, **not** a Docker named volume — named volumes have stricter lock semantics across host/container processes.
+
+### Validation harness
+
+`analysis/validation_queries.sql` is a hand-curated 9-section suite (~30 queries) for end-to-end lakehouse correctness checks: row counts across all 33 tables, Bronze integrity, Silver grain uniqueness, Gold dim PKs, fact↔dim referential integrity, cross-layer reconciliation (deliveries/wickets/matches), business rules, mart sanity, freshness. Run by pasting into `make duckdb-ui` — section 7.4 expects a small non-zero wicket diff (multi-wicket deliveries: 10 with 2 wickets, 1 with 10 wickets in the current snapshot).
+
 ### Edge cases to know
 
 - `season` field in match JSON can be a string `"2011/12"`, string `"2026"`, or integer `2007` — normalise in Silver.
 - `wickets[n].player_out` is the authoritative dismissal subject, not `batter` (they differ on run-outs).
 - `key_*` columns in `people.csv` are unpivoted to long-form in Bronze (`bronze.people_identifiers` table) — new `key_*` columns flow through automatically without code changes.
 - YAML match files are intentionally skipped at Bronze; only `.json` files are processed.
+- Silver Iceberg tables accumulate `_snapshot_date` partitions across re-runs; any consumer (dbt staging, DuckDB materialisation) must filter to `MAX(_snapshot_date)` or it will see duplicates.
+- Multi-wicket deliveries exist in the source — never assume `(match_id, innings_number, over_number, delivery_number)` is unique in `silver.wickets`.
 
 ## graphify
 
