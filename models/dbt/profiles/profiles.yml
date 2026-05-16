@@ -1,0 +1,21 @@
+cricket:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_DB_PATH', 'storage/duckdb/cricket.duckdb') }}"
+      threads: 4
+      extensions:
+        - httpfs
+        - iceberg
+      # Session-level settings applied to every dbt connection. Views over
+      # Silver tables expand to iceberg_scan() at query time, so dbt needs S3
+      # creds and version guessing exactly like refresh.py does.
+      settings:
+        s3_endpoint: "{{ env_var('MINIO_S3_ENDPOINT', 'http://minio:9000') | replace('http://', '') | replace('https://', '') }}"
+        s3_access_key_id: "{{ env_var('MINIO_ROOT_USER', 'cricket_admin') }}"
+        s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD', 'cricket_secret') }}"
+        s3_region: "us-east-1"
+        s3_use_ssl: false
+        s3_url_style: "path"
+        unsafe_enable_version_guessing: true

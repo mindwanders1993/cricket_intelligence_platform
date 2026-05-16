@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: dim_player
+    description: "Canonical player dimension from the Cricsheet Register"
+    columns:
+      - name: person_id
+        description: "Cricsheet unique identifier — natural PK"
+        tests:
+          - not_null
+          - unique
+
+  - name: dim_team
+    description: "Distinct teams observed across all matches"
+    columns:
+      - name: team_name
+        tests:
+          - not_null
+          - unique
+
+  - name: dim_venue
+    description: "Distinct venues with city"
+    columns:
+      - name: venue_name
+        tests:
+          - not_null
+          - unique
+
+  - name: dim_competition
+    description: "Distinct competition / event names"
+    columns:
+      - name: competition_name
+        tests:
+          - not_null
+          - unique
+
+  - name: dim_date
+    description: "Date spine 1970-01-01 → 2035-12-31"
+    columns:
+      - name: date_id
+        description: "YYYYMMDD integer"
+        tests:
+          - not_null
+          - unique
+      - name: date
+        tests:
+          - not_null
+
+  - name: dim_match
+    description: "One row per match — full match metadata"
+    columns:
+      - name: match_id
+        tests:
+          - not_null
+          - unique
+      - name: match_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["T20", "ODI", "Test", "IT20", "ODM", "MDM", "T20B", "hundred"]

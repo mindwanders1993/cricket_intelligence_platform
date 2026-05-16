@@ -1,0 +1,52 @@
+version: 2
+
+models:
+  - name: fact_delivery
+    description: "One row per ball — primary analytical grain"
+    columns:
+      - name: match_id
+        tests:
+          - not_null
+      - name: innings_number
+        tests:
+          - not_null
+      - name: over_number
+        tests:
+          - not_null
+      - name: delivery_number
+        tests:
+          - not_null
+      - name: match_type
+        tests:
+          - not_null
+
+  - name: fact_innings
+    description: "One row per innings per match — scoreboard grain"
+    columns:
+      - name: match_id
+        tests:
+          - not_null
+      - name: innings_number
+        tests:
+          - not_null
+      - name: team
+        tests:
+          - not_null
+
+  - name: fact_match_result
+    description: "One row per match — result and outcome grain"
+    columns:
+      - name: match_id
+        tests:
+          - not_null
+          - unique
+
+  - name: fact_player_match
+    description: "One row per player per match — batting and bowling summary"
+    columns:
+      - name: match_id
+        tests:
+          - not_null
+      # person_id is sparse upstream: Cricsheet match JSONs rarely include
+      # registry IDs (~1.3% mapped). Name-based dim_player joins fill the
+      # gap at query time. No not_null test on person_id.
