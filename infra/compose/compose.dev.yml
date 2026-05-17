@@ -101,6 +101,67 @@ services:
       start_period: 30s
 
   # ---------------------------------------------------------------------------
+  # Metabase plugin bootstrapper — downloads the DuckDB community driver JAR
+  # into a named volume on first run. The driver is not bundled with Metabase OSS.
+  # Pinned to 1.5.2.0 which targets DuckDB 1.5.2 (matches our duckdb python lib).
+  # ---------------------------------------------------------------------------
+  metabase-init:
+    image: alpine:3.20
+    volumes:
+      - metabase_plugins:/plugins
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        if [ ! -f /plugins/duckdb.metabase-driver.jar ]; then
+          apk add --no-cache curl &&
+          curl -fsSL -o /plugins/duckdb.metabase-driver.jar \
+            https://github.com/motherduckdb/metabase_duckdb_driver/releases/download/1.5.2.0/duckdb.metabase-driver.jar
+          echo "✅ DuckDB driver downloaded ($(stat -c%s /plugins/duckdb.metabase-driver.jar) bytes)"
+        else
+          echo "✅ DuckDB driver already present"
+        fi
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # Metabase — BI / dashboards over the Gold layer.
+  # Reads cricket.duckdb in read-only mode (DuckDB allows multiple concurrent
+  # readers, but only one writer). Stop Metabase before running the Gold DAG
+  # that rewrites the file — see docs/runbooks/dashboard.md.
+  # ---------------------------------------------------------------------------
+  metabase:
+    build:
+      context: ../..
+      dockerfile: infra/docker/metabase/Dockerfile
+      args:
+        METABASE_VERSION: v0.60.6
+    image: cricket-metabase:v0.60.6
+    restart: unless-stopped
+    depends_on:
+      metabase-init:
+        condition: service_completed_successfully
+    environment:
+      MB_PLUGINS_DIR: /plugins
+      MB_DB_TYPE: h2
+      MB_DB_FILE: /metabase-data/metabase.db
+      JAVA_TIMEZONE: Asia/Kolkata
+      MB_SITE_NAME: "Cricket Intelligence Platform"
+    volumes:
+      - metabase_data:/metabase-data
+      # /plugins must be writable: Metabase extracts driver JARs at startup.
+      - metabase_plugins:/plugins
+      - ../../storage/duckdb:/data:ro
+    ports:
+      - "${METABASE_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ---------------------------------------------------------------------------
   # pgAdmin — PostgreSQL web UI
   # ---------------------------------------------------------------------------
   pgadmin:
@@ -130,4 +191,6 @@ volumes:
   postgres_data:
   pgadmin_data:
   mlflow_data:
+  metabase_data:
+  metabase_plugins:
   # cricket_storage removed — now a bind mount at ../../storage so DuckDB is host-accessible

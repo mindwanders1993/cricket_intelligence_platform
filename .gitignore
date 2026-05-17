@@ -64,3 +64,4 @@ mlruns/
 # validation harness output
 validation/runs/*
 !validation/runs/.gitkeep
+.aider*

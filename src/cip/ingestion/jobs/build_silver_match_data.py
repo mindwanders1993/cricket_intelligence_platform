@@ -6,6 +6,7 @@
 # Pipeline stages:
 #   task_check_bronze_ready  → confirm bronze.match_data has data up to snapshot_date
 #   task_build_silver        → run MatchSilverPipeline.run_all()
+#   task_run_dq              → run MatchDataSilverDQChecker against the just-written tables
 #
 # XCom payloads are plain dicts of JSON-serialisable primitives.
 #
@@ -13,6 +14,8 @@
 #   poetry run python -m cip.ingestion.jobs.build_silver_match_data --task all
 #   poetry run python -m cip.ingestion.jobs.build_silver_match_data \
 #       --snapshot-date 2026-05-01 --task silver
+#   poetry run python -m cip.ingestion.jobs.build_silver_match_data \
+#       --snapshot-date 2026-05-01 --task dq
 
 from __future__ import annotations
 
@@ -143,8 +146,51 @@ def task_build_silver(
             "competitions": result.competitions_rows,
             "match_players": result.match_players_rows,
             "match_officials": result.match_officials_rows,
+            "match_powerplays": result.match_powerplays_rows,
+            "match_registry": result.match_registry_rows,
+            "unmatched_persons_audit": result.unmatched_persons_audit_rows,
         },
         "total_rows": result.total_rows,
+    }
+
+
+# ===========================================================================
+# Task 3 — Run Silver DQ checks
+# ===========================================================================
+
+
+def task_run_dq(
+    snapshot_date: str,
+    pipeline_run_id: str,
+    **context,
+) -> dict:
+    """
+    Airflow PythonOperator callable — Stage 3.
+
+    Runs MAT-SLV-001..012 DQ checks against the Silver match tables for
+    this snapshot. Persists results to control.dq_results. Raises
+    DQBlockingFailureError if any BLOCK severity check fails.
+    """
+    from cip.quality.checks.match_silver_dq import MatchDataSilverDQChecker
+
+    logger.info(
+        "task_run_dq starting",
+        extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id},
+    )
+
+    checker = MatchDataSilverDQChecker.from_settings()
+    summary = checker.run_all(
+        snapshot_date=snapshot_date,
+        pipeline_run_id=pipeline_run_id,
+    )
+
+    return {
+        "snapshot_date": snapshot_date,
+        "pipeline_run_id": pipeline_run_id,
+        "total_checks": len(summary.checks),
+        "passed": summary.passed_count,
+        "failed": summary.failed_count,
+        "blocking_failures": len(summary.blocking_failures),
     }
 
 
@@ -167,7 +213,7 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--task",
-        choices=("check", "silver", "all"),
+        choices=("check", "silver", "dq", "all"),
         default="all",
         help="Which task to run.",
     )
@@ -195,6 +241,10 @@ def main() -> None:
             force=args.force,
         )
         logger.info("Silver build complete", extra={"payload": payload})
+
+    if args.task in ("dq", "all"):
+        dq_payload = task_run_dq(snapshot_date=args.snapshot_date, pipeline_run_id=run_id)
+        logger.info("Silver DQ complete", extra={"payload": dq_payload})
 
 
 if __name__ == "__main__":

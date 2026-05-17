@@ -50,3 +50,17 @@ models:
       # person_id is sparse upstream: Cricsheet match JSONs rarely include
       # registry IDs (~1.3% mapped). Name-based dim_player joins fill the
       # gap at query time. No not_null test on person_id.
+
+  - name: fact_player_of_match
+    description: "Bridge — one row per (match_id, MOTM name). Tied matches have multiple recipients (EC-006)."
+    columns:
+      - name: match_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_match')
+                field: match_id
+      - name: player_name
+        tests:
+          - not_null

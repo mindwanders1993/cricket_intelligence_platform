@@ -12,6 +12,10 @@ build-airflow:
 
 up:
 	@if [ ! -f $(ENV_FILE) ]; then echo "Missing $(ENV_FILE). Copy .env.example first."; exit 1; fi
+	@if [ "$(shell docker images -q cricket-airflow:latest 2>/dev/null)" = "" ]; then \
+		echo "Custom Airflow image not found. Running build..."; \
+		$(MAKE) build-airflow; \
+	fi
 	$(COMPOSE_CMD) up -d
 
 down:

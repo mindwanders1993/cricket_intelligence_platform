@@ -101,6 +101,9 @@ class TableName:
             "name_variations",
             "match_players",
             "match_officials",
+            "match_powerplays",
+            "match_registry",
+            "unmatched_persons_audit",
         }
     )
 

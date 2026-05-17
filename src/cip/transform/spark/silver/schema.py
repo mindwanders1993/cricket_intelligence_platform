@@ -246,6 +246,19 @@ MATCH_JSON_SCHEMA: StructType = StructType(
                             True,
                         ),
                         StructField("super_over", BooleanType(), True),
+                        StructField(
+                            "powerplays",
+                            ArrayType(
+                                StructType(
+                                    [
+                                        StructField("from", DoubleType(), True),
+                                        StructField("to", DoubleType(), True),
+                                        StructField("type", StringType(), True),
+                                    ]
+                                )
+                            ),
+                            True,
+                        ),
                     ]
                 )
             ),

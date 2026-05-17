@@ -19,7 +19,6 @@ select
     win_by_runs,
     win_by_wickets,
     win_by_innings,
-    player_of_match,
     -- NULL propagates naturally if either side is unknown.
     toss_winner = winner                                            as toss_winner_won,
     case

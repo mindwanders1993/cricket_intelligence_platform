@@ -13,7 +13,8 @@
 #
 #   check_bronze_ready
 #       └─► build_silver
-#             └─► done
+#             └─► run_dq
+#                   └─► done
 #
 # Idempotency:
 #   Silver writes use SparkIcebergWriter.dynamic_overwrite — re-running
@@ -35,7 +36,11 @@ from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from cip.ingestion.jobs.build_silver_match_data import task_build_silver, task_check_bronze_ready
+from cip.ingestion.jobs.build_silver_match_data import (
+    task_build_silver,
+    task_check_bronze_ready,
+    task_run_dq,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +87,12 @@ with DAG(
         op_kwargs=_OP_KWARGS,
     )
 
+    run_dq = PythonOperator(
+        task_id="run_dq",
+        python_callable=task_run_dq,
+        op_kwargs={k: v for k, v in _OP_KWARGS.items() if k != "force"},
+    )
+
     done = EmptyOperator(task_id="done")
 
-    check_bronze_ready >> build_silver >> done
+    check_bronze_ready >> build_silver >> run_dq >> done

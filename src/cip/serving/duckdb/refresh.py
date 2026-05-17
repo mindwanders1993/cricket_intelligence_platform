@@ -29,6 +29,9 @@ _SILVER_TABLES = [
     "name_variations",
     "match_players",
     "match_officials",
+    "match_powerplays",
+    "match_registry",
+    "unmatched_persons_audit",
 ]
 
 _INIT_SQL = Path(__file__).parent / "init.sql"
