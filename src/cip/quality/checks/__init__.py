@@ -1,4 +1,5 @@
 from cip.quality.checks.match_bronze_dq import MatchBronzeDQChecker
+from cip.quality.checks.match_silver_dq import MatchDataSilverDQChecker
 from cip.quality.checks.people_and_names_dq import (
     DQBlockingFailureError,
     DQCheckResult,
@@ -11,5 +12,6 @@ __all__ = [
     "DQCheckResult",
     "DQRunSummary",
     "MatchBronzeDQChecker",
+    "MatchDataSilverDQChecker",
     "PeopleAndNamesDQChecker",
 ]

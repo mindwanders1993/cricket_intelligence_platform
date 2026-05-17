@@ -20,6 +20,5 @@ select
     win_by_runs,
     win_by_wickets,
     win_by_innings,
-    player_of_match,
     _snapshot_date
 from {{ ref('stg_silver_matches') }}

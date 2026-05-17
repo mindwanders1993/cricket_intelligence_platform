@@ -28,6 +28,9 @@ UNION ALL SELECT 'silver.person_identifiers',  count(*) FROM silver.person_ident
 UNION ALL SELECT 'silver.name_variations',     count(*) FROM silver.name_variations
 UNION ALL SELECT 'silver.match_players',       count(*) FROM silver.match_players
 UNION ALL SELECT 'silver.match_officials',     count(*) FROM silver.match_officials
+UNION ALL SELECT 'silver.match_powerplays',    count(*) FROM silver.match_powerplays
+UNION ALL SELECT 'silver.match_registry',      count(*) FROM silver.match_registry
+UNION ALL SELECT 'silver.unmatched_persons_audit', count(*) FROM silver.unmatched_persons_audit
 UNION ALL SELECT '— gold —',                   NULL
 UNION ALL SELECT 'gold.dim_match',             count(*) FROM gold.dim_match
 UNION ALL SELECT 'gold.dim_player',            count(*) FROM gold.dim_player
@@ -39,6 +42,7 @@ UNION ALL SELECT 'gold.fact_delivery',         count(*) FROM gold.fact_delivery
 UNION ALL SELECT 'gold.fact_innings',          count(*) FROM gold.fact_innings
 UNION ALL SELECT 'gold.fact_match_result',     count(*) FROM gold.fact_match_result
 UNION ALL SELECT 'gold.fact_player_match',     count(*) FROM gold.fact_player_match
+UNION ALL SELECT 'gold.fact_player_of_match',  count(*) FROM gold.fact_player_of_match
 UNION ALL SELECT 'gold.mart_player_batting',   count(*) FROM gold.mart_player_batting
 UNION ALL SELECT 'gold.mart_player_bowling',   count(*) FROM gold.mart_player_bowling
 UNION ALL SELECT 'gold.mart_venue_dna',        count(*) FROM gold.mart_venue_dna
@@ -185,6 +189,20 @@ SELECT
   (SELECT count(*) FROM gold.fact_match_result) AS fact_match_result_rows,
   (SELECT count(*) FROM gold.dim_match) - (SELECT count(*) FROM gold.fact_match_result) AS diff;
 -- Expected: diff = 0
+
+-- 5.4 fact_player_of_match — grain is (match_id, player_name); orphans to dim_match must be 0;
+--     tied-MOTM matches surface as > 1 row per match_id.
+SELECT
+  count(*)                                                                AS total_rows,
+  count(DISTINCT match_id)                                                AS distinct_matches,
+  count(*) - count(DISTINCT (match_id, player_name))                      AS duplicate_grain_rows,
+  (SELECT count(*) FROM gold.fact_player_of_match f
+     WHERE NOT EXISTS (SELECT 1 FROM gold.dim_match d WHERE d.match_id = f.match_id)) AS orphan_rows,
+  (SELECT count(*) FROM (
+     SELECT match_id FROM gold.fact_player_of_match GROUP BY 1 HAVING count(*) > 1
+   ) t)                                                                   AS tied_motm_matches
+FROM gold.fact_player_of_match;
+-- Expected: duplicate_grain_rows = 0, orphan_rows = 0, tied_motm_matches > 0 (tied finals etc.)
 
 
 -- =================================================================

@@ -103,6 +103,10 @@ cd models/dbt && poetry run dbt test                           # dbt tests (40 t
 # DuckDB serving UI (browser at http://localhost:4213)
 make duckdb-ui     # opens the DuckDB built-in web UI on storage/duckdb/cricket.duckdb
 make duckdb-stop   # release the file lock BEFORE running dag_run_gold_dbt_models
+
+# Metabase — BI dashboards
+python scripts/provision_metabase_dashboards.py  # (re)provision Cricket dashboards + filters via Metabase API
+# Note: Metabase must be running (make up) before provisioning. Safe to re-run — uses upsert semantics.
 ```
 
 Line length is 120 for ruff, black, and isort.
@@ -246,6 +250,7 @@ Every pipeline task guards against re-runs via `control.register_ingestion_log` 
 | pgAdmin | http://localhost:5050 | `admin@cricket-platform.local` | `admin123` |
 | MLflow | http://localhost:5001 | — | — |
 | Iceberg REST | http://localhost:8181 (API only — no UI) | — | — |
+| Metabase | http://localhost:3000 | `admin@cricket-platform.local` | `Cricket2026!` |
 
 If the Airflow login fails after a password change in `.env`, reset it in the running container:
 
@@ -284,8 +289,10 @@ dbt project lives at `models/dbt/` (profile `cricket`, target `dev`). The Gold l
 - **Staging** (`models/dbt/models/staging/`): one `stg_silver_*` per source — minor renames + type coercion only.
 - **Marts**:
   - Dimensions (`models/dbt/models/marts/dimensions/`): `dim_match`, `dim_player`, `dim_team`, `dim_venue`, `dim_competition`, `dim_official`.
-  - Facts (`models/dbt/models/marts/facts/`): `fact_delivery`, `fact_innings`, `fact_match_result`, `fact_player_match`.
+  - Facts (`models/dbt/models/marts/facts/`): `fact_delivery`, `fact_innings`, `fact_match_result`, `fact_player_match`, `fact_player_of_match`.
   - Marts/aggregates (`models/dbt/models/marts/aggregates/`): batting/bowling career & season summaries.
+
+**`fact_player_of_match` grain:** one row per `(match_id, player_name)`. Bridge table that explodes the `player_of_match` array from `stg_silver_matches`. Tied matches (EC-006) produce multiple rows. `QUALIFY ROW_NUMBER() OVER (PARTITION BY match_id, player_name ORDER BY _snapshot_date) = 1` guards against duplicate names within the same source array (data-quality artifact in source JSON). Custom dbt test `fact_player_of_match_unique_grain` enforces the grain.
 
 **`fact_delivery` grain rule:** one row per ball. The wickets and match_players CTEs are deduped with `QUALIFY ROW_NUMBER()` **before** the LEFT JOIN — otherwise multi-wicket deliveries (e.g. caught + non-striker run-out on the same ball) inflate the fact. The wickets dedup prefers bowler-credited kinds (`caught`, `bowled`, `lbw`, `stumped`, `caught and bowled`, `hit wicket`) so the surfaced `dismissal_kind` matches scoring convention.
 
@@ -302,6 +309,17 @@ dbt project lives at `models/dbt/` (profile `cricket`, target `dev`). The Gold l
 
 The DB file lives at `storage/duckdb/cricket.duckdb` (bind-mounted into the Airflow containers via `compose.dev.yml`, so the host CLI and the DAG share the same file). Bind mount, **not** a Docker named volume — named volumes have stricter lock semantics across host/container processes.
 
+### Metabase BI layer
+
+Metabase v0.60.6 (OSS) + community DuckDB driver (`motherduckdb/metabase_duckdb_driver 1.5.2.0`). Runs as `compose-metabase-1` on port 3000. Reads `storage/duckdb/cricket.duckdb` in **read-only mode** — it never writes to DuckDB.
+
+- Custom Docker image (`infra/docker/metabase/Dockerfile`) based on `eclipse-temurin:21-jre-jammy` (Ubuntu glibc). The official Alpine image causes JNI segfaults with jemalloc — do not switch back to Alpine.
+- Dashboards are provisioned via `scripts/provision_metabase_dashboards.py`. Re-run after a volume wipe or to push SQL changes.
+- **DuckDB lock with Metabase:** Metabase holds a read connection at all times. Before running `dag_run_gold_dbt_models`, you must stop Metabase (`docker stop compose-metabase-1`), run the DAG, then restart. Or use `make duckdb-stop` for host-side lock release — but that doesn't release Metabase's connection. See `docs/runbooks/dashboard.md` §5.
+- **Metabase field filter + table aliases:** Metabase dimension field filters emit fully qualified column references (`"gold"."fact_delivery"."batter" = ?`). DuckDB resolves this against the physical table name — if the SQL query uses a table alias (`fd` instead of `gold.fact_delivery`), DuckDB raises `"Referenced table 'gold.fact_delivery' not found! Candidate tables: 'fd'"`. Fix: **never use table aliases in Player Spotlight SQL cards**. Use `gold.fact_delivery.column` throughout.
+- **Cricsheet player names:** Cricsheet uses abbreviated initials (`V Kohli`, `RG Sharma`). Dropdown search for `Virat Kohli` returns nothing. Planned fix: `scripts/data/player_aliases.csv` seed → `gold.player_display_names` table. See `docs/runbooks/dashboard.md` §12.
+- For admin password recovery or full re-provision instructions, see `docs/runbooks/dashboard.md`.
+
 ### Validation harness
 
 `analysis/validation_queries.sql` is a hand-curated 9-section suite (~30 queries) for end-to-end lakehouse correctness checks: row counts across all 33 tables, Bronze integrity, Silver grain uniqueness, Gold dim PKs, fact↔dim referential integrity, cross-layer reconciliation (deliveries/wickets/matches), business rules, mart sanity, freshness. Run by pasting into `make duckdb-ui` — section 7.4 expects a small non-zero wicket diff (multi-wicket deliveries: 10 with 2 wickets, 1 with 10 wickets in the current snapshot).
@@ -314,6 +332,8 @@ The DB file lives at `storage/duckdb/cricket.duckdb` (bind-mounted into the Airf
 - YAML match files are intentionally skipped at Bronze; only `.json` files are processed.
 - Silver Iceberg tables accumulate `_snapshot_date` partitions across re-runs; any consumer (dbt staging, DuckDB materialisation) must filter to `MAX(_snapshot_date)` or it will see duplicates.
 - Multi-wicket deliveries exist in the source — never assume `(match_id, innings_number, over_number, delivery_number)` is unique in `silver.wickets`.
+- Cricsheet player names are abbreviated initials (`V Kohli`, not `Virat Kohli`). Any consumer that needs display names must maintain a separate alias table — do not assume full names exist in `gold.fact_delivery.batter` or `gold.mart_player_batting.player_name`.
+- `player_of_match` in match JSON is an array and can contain the same name twice (data artefact). Always dedup with `QUALIFY ROW_NUMBER() OVER (PARTITION BY match_id, player_name ...)` when exploding this array.
 
 ## graphify
 
