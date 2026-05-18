@@ -29,6 +29,7 @@ _BRONZE_FQN = TableName.bronze("match_data")
 def read_bronze_matches(
     spark: "SparkSession",
     snapshot_date: str,
+    match_ids: list[str] | None = None,
 ) -> "DataFrame":
     """
     Read Bronze match documents, dedup by MAX(revision) per match_id, parse JSON.
@@ -37,6 +38,12 @@ def read_bronze_matches(
         spark:          Active SparkSession (Iceberg-aware).
         snapshot_date:  ISO date.  Only Bronze rows with
                         `_snapshot_date <= snapshot_date` are considered.
+        match_ids:      Optional incremental scope. When provided, the Bronze
+                        read is filtered to these match_ids BEFORE the dedup
+                        window — saves both scan cost and shuffle cost
+                        proportional to the skipped match count. When None,
+                        every match_id in scope of the snapshot is read
+                        (full rebuild semantics).
 
     Returns:
         Cached DataFrame with columns:
@@ -50,6 +57,11 @@ def read_bronze_matches(
     from pyspark.sql import functions as F
 
     bronze = spark.read.format("iceberg").load(_BRONZE_FQN).filter(F.col(META.SNAPSHOT_DATE) <= F.lit(snapshot_date))
+
+    if match_ids is not None:
+        # Push the match_id filter BEFORE the dedup window so the shuffle
+        # operates on the scoped set, not all 21k matches.
+        bronze = bronze.filter(F.col("match_id").isin(list(match_ids)))
 
     # Dedup: pick row with MAX(revision) per match_id.  Revision is stored
     # as string in Bronze; cast to int for proper ordering.

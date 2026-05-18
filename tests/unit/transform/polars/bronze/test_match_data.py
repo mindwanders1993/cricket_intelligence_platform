@@ -270,6 +270,7 @@ class TestMatchBronzeLoaderIdempotency:
                 files_attempted=10,
                 files_succeeded=10,
                 files_failed=0,
+                files_skipped_by_audit=0,
                 rows_written=10,
                 duration_seconds=1.0,
             )

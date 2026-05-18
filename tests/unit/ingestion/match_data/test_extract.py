@@ -74,11 +74,19 @@ class TestExtractionManifest:
         assert manifest.file_count == 0
         assert manifest.entries == []
 
-    def test_manifest_object_key(self):
+    def test_manifest_object_key_default_archive(self):
         from cip.ingestion.match_data.manifest import manifest_object_key
 
         key = manifest_object_key("2026-05-01")
-        assert key == "match_data/json/snapshot_date=2026-05-01/_manifest.json"
+        assert key == "match_data/json/snapshot_date=2026-05-01/archive=all_json/_manifest.json"
+
+    def test_manifest_object_key_custom_archive(self):
+        from cip.ingestion.match_data.manifest import manifest_object_key
+
+        key = manifest_object_key("2026-05-17", archive_file="recently_added_2_json.zip")
+        assert key == (
+            "match_data/json/snapshot_date=2026-05-17/archive=recently_added_2_json/_manifest.json"
+        )
 
 
 class TestWriteReadManifest:

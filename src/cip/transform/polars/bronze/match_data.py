@@ -26,16 +26,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import polars as pl
 
 from cip.common.contracts.enums import Layer
-from cip.common.contracts.naming import META, TableName
+from cip.common.contracts.naming import META, PathBuilder, TableName
 from cip.common.logging import get_logger
+from cip.ingestion.audit.match_file_audit import MatchFileAudit
 from cip.ingestion.io.minio import MinIOClient
 from cip.transform.shared.writers import PolarsIcebergWriter
 
@@ -47,6 +50,9 @@ _ARCHIVE_FILE = "all_json.zip"
 _SOURCE_URL = "https://cricsheet.org/downloads/all_json.zip"
 _DAG_ID = "dag_ingest_match_data"
 _MAX_WORKERS = 20
+
+DEFAULT_ARCHIVE_FILE = _ARCHIVE_FILE
+DEFAULT_SOURCE_URL = _SOURCE_URL
 # Number of JSON files processed (read + parse + write) per Iceberg append batch.
 # Keeps peak memory bounded — the full 21k-file run would otherwise materialise
 # every match's raw_json (~1 GB+ of strings) in memory at once and OOM small
@@ -61,6 +67,7 @@ class MatchLoadResult:
     files_attempted: int
     files_succeeded: int
     files_failed: int
+    files_skipped_by_audit: int
     rows_written: int
     duration_seconds: float
     archive_download_id: int | None = None
@@ -80,13 +87,28 @@ class MatchBronzeLoader:
         minio: MinIOClient,
         writer: PolarsIcebergWriter,
         pg_dsn: str,
+        archive_file: str = DEFAULT_ARCHIVE_FILE,
+        archive_url: str = DEFAULT_SOURCE_URL,
+        dag_id: str = _DAG_ID,
+        audit: MatchFileAudit | None = None,
     ) -> None:
         self._minio = minio
         self._writer = writer
         self._pg_dsn = pg_dsn
+        self._archive_file = archive_file
+        self._archive_url = archive_url
+        self._dag_id = dag_id
+        # Audit log handle — drives skip-on-duplicate before write and stamps
+        # bronze_loaded_at + archive_path after.
+        self._audit = audit or MatchFileAudit(pg_dsn)
 
     @classmethod
-    def from_settings(cls) -> "MatchBronzeLoader":
+    def from_settings(
+        cls,
+        archive_file: str = DEFAULT_ARCHIVE_FILE,
+        archive_url: str = DEFAULT_SOURCE_URL,
+        dag_id: str = _DAG_ID,
+    ) -> "MatchBronzeLoader":
         from cip.common.settings import get_settings
 
         cfg = get_settings()
@@ -95,6 +117,9 @@ class MatchBronzeLoader:
             minio=MinIOClient.from_settings(),
             writer=PolarsIcebergWriter.from_settings(),
             pg_dsn=pg_dsn,
+            archive_file=archive_file,
+            archive_url=archive_url,
+            dag_id=dag_id,
         )
 
     # -------------------------------------------------------------------------
@@ -133,6 +158,7 @@ class MatchBronzeLoader:
                     files_attempted=0,
                     files_succeeded=0,
                     files_failed=0,
+                    files_skipped_by_audit=0,
                     rows_written=0,
                     duration_seconds=0.0,
                     archive_download_id=archive_download_id,
@@ -197,7 +223,13 @@ class MatchBronzeLoader:
 
         total_succeeded = 0
         total_failed_keys: list[str] = []
+        total_skipped_by_audit = 0
         total_rows_written = 0
+        # Per-file audit follow-up: stamp bronze_loaded_at + archive_path after
+        # each batch lands. Accumulate across batches; flush at the end.
+        bronze_loaded_rows: list[tuple[str, str, int]] = []
+        # (file_name, content_hash) -> source MinIO key (for archive copy)
+        source_keys: dict[tuple[str, str], str] = {}
 
         for batch_start in range(0, files_attempted, _BATCH_SIZE):
             batch = json_files[batch_start : batch_start + _BATCH_SIZE]
@@ -213,28 +245,68 @@ class MatchBronzeLoader:
                 },
             )
 
-            records, failed_files = self._read_json_files(batch)
-            total_succeeded += len(records)
+            parsed, failed_files = self._read_and_hash_files(batch)
             total_failed_keys.extend(failed_files)
+            if not parsed:
+                continue
 
-            if records:
-                rows = self._attach_revisions(records, existing_revisions)
-                df = pl.DataFrame(rows, schema=_bronze_schema())
-                rows_written = self._writer.create_and_append(
-                    df=df,
-                    fqn=_TABLE,
-                    snapshot_date=snapshot_date,
-                    layer=Layer.BRONZE,
-                    partition_cols=[_PARTITION_COL],
-                    pipeline_run_id=pipeline_run_id,
-                    source_file=_ARCHIVE_FILE,
-                    source_url=_SOURCE_URL,
+            # Audit-driven skip: drop files whose content_hash is already in
+            # Bronze. This is what stops the daily DAG's 2-day overlap from
+            # producing phantom revisions.
+            hashes = {p["content_hash"] for p in parsed}
+            already_loaded = self._audit.lookup_bronze_loaded(hashes)
+            new_parsed = [p for p in parsed if p["content_hash"] not in already_loaded]
+            skipped_this_batch = len(parsed) - len(new_parsed)
+            total_skipped_by_audit += skipped_this_batch
+            if skipped_this_batch:
+                logger.info(
+                    "Audit-skip dropped batch files",
+                    extra={"batch": f"{batch_num}/{total_batches}", "skipped": skipped_this_batch},
                 )
-                total_rows_written += rows_written
-                # Drop large refs so GC can reclaim before the next batch loads.
-                del records, rows, df
 
-        if total_succeeded == 0:
+            if not new_parsed:
+                continue
+
+            records = [p["record"] for p in new_parsed]
+            records = self._attach_revisions(records, existing_revisions)
+
+            # Keep existing_revisions current across batches so the same match_id
+            # appearing in two batches doesn't get revision=1 twice.
+            for r in records:
+                mid = r["match_id"]
+                rev = int(r["revision"])
+                if rev > existing_revisions.get(mid, 0):
+                    existing_revisions[mid] = rev
+
+            df = pl.DataFrame(records, schema=_bronze_schema())
+            rows_written = self._writer.create_and_append(
+                df=df,
+                fqn=_TABLE,
+                snapshot_date=snapshot_date,
+                layer=Layer.BRONZE,
+                partition_cols=[_PARTITION_COL],
+                pipeline_run_id=pipeline_run_id,
+                source_file=self._archive_file,
+                source_url=self._archive_url,
+            )
+            total_succeeded += len(new_parsed)
+            total_rows_written += rows_written
+
+            # Collect (file_name, content_hash, revision) + source_key for the
+            # post-write audit stamp and archive copy.
+            for p, r in zip(new_parsed, records, strict=True):
+                key = (p["file_name"], p["content_hash"])
+                bronze_loaded_rows.append((p["file_name"], p["content_hash"], int(r["revision"])))
+                source_keys[key] = p["source_key"]
+
+            del parsed, new_parsed, records, df
+
+        # Audit + archive — outside the batch loop. Both are idempotent ops.
+        if bronze_loaded_rows:
+            self._stamp_bronze_loaded(bronze_loaded_rows, pipeline_run_id)
+            self._copy_to_archive_and_stamp(source_keys)
+
+        if total_succeeded == 0 and total_skipped_by_audit == 0:
             logger.warning(
                 "No rows parsed — Iceberg write skipped",
                 extra={"snapshot_date": snapshot_date},
@@ -249,6 +321,7 @@ class MatchBronzeLoader:
                 "files_attempted": files_attempted,
                 "files_succeeded": total_succeeded,
                 "files_failed": len(total_failed_keys),
+                "files_skipped_by_audit": total_skipped_by_audit,
                 "rows_written": total_rows_written,
                 "duration_seconds": duration,
             },
@@ -260,21 +333,27 @@ class MatchBronzeLoader:
             files_attempted=files_attempted,
             files_succeeded=total_succeeded,
             files_failed=len(total_failed_keys),
+            files_skipped_by_audit=total_skipped_by_audit,
             rows_written=total_rows_written,
             duration_seconds=duration,
             archive_download_id=archive_download_id,
         )
 
     def _list_json_files(self, snapshot_date: str) -> list:
-        """Return S3ObjectMeta list for all match JSON files in the match_data/json prefix.
+        """Return S3ObjectMeta list for all match JSON files for THIS archive.
 
         Sidecar files starting with `_` (e.g. `_manifest.json`) are excluded —
         they're internal metadata, not match documents.
+
+        The prefix is scoped to `archive={stem}/` so the full-backfill and
+        incremental pipelines never read each other's JSONs when they share a
+        snapshot_date.
         """
         from cip.common.settings import get_settings
 
         cfg = get_settings().storage
-        prefix = f"match_data/json/snapshot_date={snapshot_date}/"
+        archive_stem = self._archive_file.removesuffix(".zip")
+        prefix = f"match_data/json/snapshot_date={snapshot_date}/archive={archive_stem}/"
         objs = self._minio.list_objects(
             bucket=cfg.bucket_source_files,
             prefix=prefix,
@@ -282,18 +361,32 @@ class MatchBronzeLoader:
         )
         return [o for o in objs if not o.file_name.startswith("_")]
 
-    def _read_json_files(self, json_files: list) -> tuple[list[dict], list[str]]:
-        """Read and parse JSON files from MinIO with thread pool. Returns (records, failed_keys)."""
+    def _read_and_hash_files(self, json_files: list) -> tuple[list[dict], list[str]]:
+        """Read, sha256-hash, and parse each JSON file from MinIO.
+
+        Returns (parsed_list, failed_keys) where each parsed item is a dict
+        with keys: file_name, content_hash, source_key, record. `record` is
+        the dict ready for the Bronze schema (without revision attached).
+        """
         from cip.common.settings import get_settings
 
         source_files_bucket = get_settings().storage.bucket_source_files
-        records: list[dict] = []
+        parsed: list[dict] = []
         failed: list[str] = []
 
         def _read_one(obj_meta) -> dict | None:
             try:
                 content = self._minio.read_bytes(source_files_bucket, obj_meta.key)
-                return _parse_json_file(obj_meta.file_name, content)
+                content_hash = hashlib.sha256(content).hexdigest()
+                record = _parse_json_file(obj_meta.file_name, content)
+                if record is None:
+                    return None
+                return {
+                    "file_name": obj_meta.file_name,
+                    "content_hash": content_hash,
+                    "source_key": obj_meta.key,
+                    "record": record,
+                }
             except Exception as exc:
                 logger.error(
                     "Failed to read JSON file",
@@ -307,11 +400,74 @@ class MatchBronzeLoader:
                 key = futures[future]
                 result = future.result()
                 if result is not None:
-                    records.append(result)
+                    parsed.append(result)
                 else:
                     failed.append(key)
 
-        return records, failed
+        return parsed, failed
+
+    # -------------------------------------------------------------------------
+    # Audit-log + archive-copy post-processing
+    # -------------------------------------------------------------------------
+
+    def _stamp_bronze_loaded(
+        self,
+        bronze_loaded_rows: list[tuple[str, str, int]],
+        pipeline_run_id: str,
+    ) -> None:
+        self._audit.mark_bronze_loaded(
+            rows=bronze_loaded_rows,
+            pipeline_run_id=pipeline_run_id,
+            archive_file=self._archive_file,
+            ts=datetime.now(timezone.utc),
+        )
+
+    def _copy_to_archive_and_stamp(self, source_keys: dict[tuple[str, str], str]) -> None:
+        """Server-side copy each Bronze-loaded JSON to the canonical archive
+        prefix, then stamp archive_path + archived_at in the audit log.
+
+        Idempotent — re-copying overwrites the destination object.
+        """
+        from cip.common.settings import get_settings
+
+        cfg = get_settings().storage
+        source_bucket = cfg.bucket_source_files
+        processed_date = datetime.now(timezone.utc).date().isoformat()
+
+        # Submit copies in parallel — server-side copies are cheap but
+        # latency-bound; threading keeps wall time low on 21k files.
+        archive_paths: dict[tuple[str, str], str] = {}
+
+        def _copy_one(item: tuple[tuple[str, str], str]) -> tuple[tuple[str, str], str] | None:
+            (file_name, content_hash), src_key = item
+            archive_path = PathBuilder.archive_processed(processed_date, file_name)
+            # archive_path is s3://{bucket}/{key} — strip prefix to derive object key
+            dst_key = archive_path.removeprefix(f"s3://{source_bucket}/")
+            try:
+                self._minio.copy_object(
+                    src_bucket=source_bucket,
+                    src_key=src_key,
+                    dst_bucket=source_bucket,
+                    dst_key=dst_key,
+                )
+                return (file_name, content_hash), archive_path
+            except Exception as exc:
+                logger.error(
+                    "Failed to copy to archive prefix",
+                    extra={"src_key": src_key, "dst_key": dst_key, "error": str(exc)},
+                )
+                return None
+
+        with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
+            for result in executor.map(_copy_one, source_keys.items()):
+                if result is not None:
+                    archive_paths[result[0]] = result[1]
+
+        if archive_paths:
+            self._audit.mark_archived(
+                file_hash_to_archive_path=archive_paths,
+                ts=datetime.now(timezone.utc),
+            )
 
     def _fetch_existing_revisions(self) -> dict[str, int]:
         """Query Bronze for max revision per match_id across all snapshots."""
@@ -372,7 +528,7 @@ class MatchBronzeLoader:
                     WHERE archive_file = %s AND snapshot_date = %s AND status = 'SUCCESS'
                     ORDER BY id DESC LIMIT 1
                     """,
-                    (_ARCHIVE_FILE, snapshot_date),
+                    (self._archive_file, snapshot_date),
                 )
                 row = cur.fetchone()
         return row[0] if row else None
@@ -392,9 +548,9 @@ class MatchBronzeLoader:
                     """,
                     (
                         pipeline_run_id,
-                        _DAG_ID,
+                        self._dag_id,
                         archive_download_id,
-                        _ARCHIVE_FILE,
+                        self._archive_file,
                         snapshot_date,
                     ),
                 )

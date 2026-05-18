@@ -619,6 +619,37 @@ class MinIOClient:
                 raise ObjectNotFoundError(f"s3://{bucket}/{key}") from exc
             raise
 
+    @_with_retry()
+    def copy_object(
+        self,
+        src_bucket: str,
+        src_key: str,
+        dst_bucket: str,
+        dst_key: str,
+    ) -> None:
+        """
+        Copy an object from one S3 location to another. Server-side copy —
+        no bytes flow through the client.
+
+        Used by the match-data Bronze loader to copy processed JSON files to
+        the canonical archive prefix (match_data/archive/processed_date=…/).
+        """
+        try:
+            self._s3.copy_object(
+                Bucket=dst_bucket,
+                Key=dst_key,
+                CopySource={"Bucket": src_bucket, "Key": src_key},
+            )
+        except botocore.exceptions.ClientError as exc:
+            if exc.response["Error"]["Code"] in ("404", "NoSuchKey"):
+                raise ObjectNotFoundError(f"s3://{src_bucket}/{src_key}") from exc
+            raise StorageError(
+                f"Copy failed: s3://{src_bucket}/{src_key} → s3://{dst_bucket}/{dst_key}",
+                bucket=dst_bucket,
+                key=dst_key,
+                reason=str(exc),
+            ) from exc
+
     # -----------------------------------------------------------------------
     # Delete operations
     # -----------------------------------------------------------------------

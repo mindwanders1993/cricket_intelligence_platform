@@ -84,10 +84,13 @@ class MatchFileAudit:
     # Bronze stage — skip lookup + landing insert + bronze mark + archive mark
     # -------------------------------------------------------------------------
 
-    def lookup_seen(self, content_hashes: set[str]) -> set[str]:
-        """Return the subset of content_hashes already present in the audit log.
+    def lookup_bronze_loaded(self, content_hashes: set[str]) -> set[str]:
+        """Return the subset of content_hashes whose audit row has bronze_loaded_at set.
 
-        Used by the Bronze loader to drop already-seen files before write.
+        Used by the Bronze loader to drop already-Bronze-loaded files BEFORE
+        write. Extract.py stamps landing_loaded_at on every file as it arrives,
+        so a content_hash existing in the audit log does NOT imply it's already
+        in Bronze — we must filter by bronze_loaded_at IS NOT NULL.
         """
         if not content_hashes:
             return set()
@@ -101,6 +104,7 @@ class MatchFileAudit:
                     SELECT DISTINCT content_hash
                     FROM control.match_file_audit
                     WHERE content_hash = ANY(%s)
+                      AND bronze_loaded_at IS NOT NULL
                     """,
                     (list(content_hashes),),
                 )

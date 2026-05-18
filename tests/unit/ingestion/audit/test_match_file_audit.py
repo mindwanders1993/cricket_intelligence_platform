@@ -110,31 +110,32 @@ class TestFromSettings:
 
 
 # ---------------------------------------------------------------------------
-# lookup_seen
+# lookup_bronze_loaded
 # ---------------------------------------------------------------------------
 
 
-class TestLookupSeen:
+class TestLookupBronzeLoaded:
     def test_empty_input_returns_empty_set_without_db_call(self):
         audit = MatchFileAudit(_DSN)
         cur = _FakeCursor()
 
         with _patched_connect(cur):
-            result = audit.lookup_seen(set())
+            result = audit.lookup_bronze_loaded(set())
 
         assert result == set()
         assert cur.executed == []
 
-    def test_returns_subset_of_seen_hashes(self):
+    def test_returns_subset_of_bronze_loaded_hashes(self):
         audit = MatchFileAudit(_DSN)
         cur = _FakeCursor(fetch_responses=[[("abc",), ("def",)]])
 
         with _patched_connect(cur):
-            result = audit.lookup_seen({"abc", "def", "ghi"})
+            result = audit.lookup_bronze_loaded({"abc", "def", "ghi"})
 
         assert result == {"abc", "def"}
         sql, params = cur.executed[0]
         assert "content_hash = ANY(%s)" in sql
+        assert "bronze_loaded_at IS NOT NULL" in sql
         assert sorted(params[0]) == ["abc", "def", "ghi"]
 
     def test_no_matches_returns_empty(self):
@@ -142,7 +143,7 @@ class TestLookupSeen:
         cur = _FakeCursor(fetch_responses=[[]])
 
         with _patched_connect(cur):
-            result = audit.lookup_seen({"abc"})
+            result = audit.lookup_bronze_loaded({"abc"})
 
         assert result == set()
 

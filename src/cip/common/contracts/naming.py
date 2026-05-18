@@ -225,6 +225,19 @@ class PathBuilder:
         return f"s3://{cls.SOURCE_FILES_BUCKET}/match_data/json/{cls._partition(snapshot_date)}/{file_name}"
 
     @classmethod
+    def archive_processed(cls, processed_date: str | date, file_name: str) -> str:
+        """Canonical post-Bronze archive location for a processed JSON file.
+
+        Match-data Bronze loader copies each successfully-loaded JSON here so
+        the audit log's archive_path points to a stable, retention-controlled
+        location separate from the time-varying landing prefix.
+        """
+        return (
+            f"s3://{cls.SOURCE_FILES_BUCKET}/match_data/archive/"
+            f"processed_date={_validate_date(processed_date)}/{file_name}"
+        )
+
+    @classmethod
     def source_people_and_names_csv(cls, file_name: str, snapshot_date: str | date) -> str:
         return f"s3://{cls.SOURCE_FILES_BUCKET}/people_and_names/csv/{cls._partition(snapshot_date)}/{file_name}"
 
@@ -338,20 +351,18 @@ class DagNames:
     Used in pipeline_watermark seeds and cross-DAG trigger logic.
     """
 
-    # Legacy DAG IDs — kept until PR 2 deletes the corresponding DAG files.
-    INGEST_MATCH_DATA: str = "dag_ingest_match_data"
-    INGEST_MATCH_DATA_LAST_2_DAYS: str = "dag_ingest_match_data_last_2_days"
-    BUILD_SILVER_MATCH_DATA: str = "dag_build_silver_match_data"
-    RUN_GOLD_DBT: str = "dag_run_gold_dbt_models"
-
-    # New DAG IDs introduced in the match-data pipeline rework
-    # (audit-log + incremental Silver/Gold). Wired up by PR 2 and PR 3.
+    # Match-data DAGs — full + incremental pipelines, audit-driven.
     FULL_LOAD_MATCH_DATA: str = "dag_full_load_match_data"
     INCREMENTAL_MATCH_DATA: str = "dag_incremental_match_data"
+
+    # Gold DAGs — full-refresh + incremental dbt, manual triggers only.
     FULL_LOAD_GOLD: str = "dag_full_load_gold"
     INCREMENTAL_GOLD: str = "dag_incremental_gold"
 
-    # Unchanged peer DAGs
+    # Legacy Gold DAG — kept until PR 3 splits Gold into the two new DAGs above.
+    RUN_GOLD_DBT: str = "dag_run_gold_dbt_models"
+
+    # Peer pipelines (People & Names, ML, AI refresh, etc.)
     INGEST_PEOPLE_AND_NAMES: str = "dag_ingest_people_and_names"
     BUILD_SILVER_PEOPLE_AND_NAMES: str = "dag_build_silver_people_and_names"
     PARSE_BRONZE_MATCH_DATA: str = "dag_parse_bronze_match_data"
@@ -363,14 +374,11 @@ class DagNames:
     @classmethod
     def all(cls) -> list[str]:
         return [
-            cls.INGEST_MATCH_DATA,
-            cls.INGEST_MATCH_DATA_LAST_2_DAYS,
             cls.FULL_LOAD_MATCH_DATA,
             cls.INCREMENTAL_MATCH_DATA,
             cls.FULL_LOAD_GOLD,
             cls.INCREMENTAL_GOLD,
             cls.INGEST_PEOPLE_AND_NAMES,
-            cls.BUILD_SILVER_MATCH_DATA,
             cls.BUILD_SILVER_PEOPLE_AND_NAMES,
             cls.PARSE_BRONZE_MATCH_DATA,
             cls.RUN_GOLD_DBT,

@@ -92,6 +92,10 @@ poetry run python -m cip.ingestion.jobs.ingest_people_and_names --snapshot-date 
 poetry run python -m cip.ingestion.jobs.build_silver_people_and_names --task all
 poetry run python -m cip.ingestion.jobs.build_silver_people_and_names --snapshot-date 2026-05-11 --task silver
 poetry run python -m cip.ingestion.jobs.build_silver_people_and_names --snapshot-date 2026-05-11 --task dq
+# Match data — full backfill (monthly): all_json.zip → Bronze
+ICEBERG_REST_URI=http://localhost:8181 MINIO_S3_ENDPOINT=http://localhost:9000 POSTGRES_HOST=localhost poetry run python -m cip.ingestion.jobs.ingest_match_data --task all
+# Match data — daily incremental: recently_added_2_json.zip → Bronze (same target table)
+ICEBERG_REST_URI=http://localhost:8181 MINIO_S3_ENDPOINT=http://localhost:9000 POSTGRES_HOST=localhost poetry run python -m cip.ingestion.jobs.ingest_match_data_last_2_days --task all
 # Match data — All match data Silver build
 ICEBERG_REST_URI=http://localhost:8181 MINIO_S3_ENDPOINT=http://localhost:9000 POSTGRES_HOST=localhost SPARK_DRIVER_MEMORY=8g SPARK_MASTER=local[2] poetry run python -m cip.ingestion.jobs.build_silver_match_data --snapshot-date 2026-05-01 --task all
 
@@ -226,6 +230,43 @@ New table names must be added to `TableName.BRONZE_TABLES` / `SILVER_TABLES` / `
 
 Every pipeline task guards against re-runs via `control.register_ingestion_log` (register pipeline) or `control.bronze_ingestion_log` (match pipeline). Pass `force=True` / `--force` to bypass. DAG conf `{"force": true}` propagates via Jinja to all tasks.
 
+### Match ingestion pipelines (full backfill vs daily incremental)
+
+Two DAGs land into the **same** `bronze.match_data` table. The medallion design uses append-only Bronze + revision tracking; "upsert" semantics emerge at the Silver layer via `MAX(revision) per match_id` dedup. There is no `MERGE INTO` anywhere — do not add one.
+
+| Aspect | `dag_ingest_match_data` (monthly) | `dag_ingest_match_data_last_2_days` (daily) |
+|---|---|---|
+| Source archive | `all_json.zip` (~21k matches) | `recently_added_2_json.zip` (~30 matches added in the last 2 days) |
+| Schedule | 1st of each month, 01:00 UTC | Every day, 02:00 UTC |
+| `archive_file` in control logs | `all_json.zip` | `recently_added_2_json.zip` |
+| MinIO JSON prefix | `match_data/json/snapshot_date={date}/archive=all_json/` | `match_data/json/snapshot_date={date}/archive=recently_added_2_json/` |
+| Bronze write mode | Append, with `revision = MAX(existing) + 1` per match_id | Same — append, same revision rule |
+| Auto-triggers Silver? | No (monthly Silver DAG runs the next day) | **Yes** — `TriggerDagRunOperator` waits for `dag_build_silver_match_data` to finish |
+| Auto-triggers Gold? | No | **No** — Metabase holds a DuckDB read lock; Gold must run in a maintenance window after stopping `compose-metabase-1` |
+
+**Why Bronze is append-only (and never `MERGE`d):**
+
+- Auditability: every prior version of a match is recoverable from Bronze.
+- Idempotency: re-running a snapshot can only ever produce duplicate `(match_id, revision)` pairs — never silent data loss.
+- Silver/Gold present the "current view" by reading `MAX(revision) per match_id` in `src/cip/transform/spark/silver/bronze_reader.py:52-57`. The newer incremental wins automatically because its revision is higher than any prior backfill row.
+
+**Why the MinIO prefix is partitioned by archive:**
+
+If the monthly backfill and the daily incremental ever share a `snapshot_date` (e.g. someone manually re-runs the monthly with `--snapshot-date=today`), they used to write to the same MinIO JSON prefix — and the Bronze loader would scan the entire prefix, re-loading the other pipeline's files under its own `_source_file` attribution.
+
+The fix: each archive owns a prefix segment (`archive=all_json/` vs `archive=recently_added_2_json/`). Both extract and Bronze loaders use the per-archive path. The `_manifest.json` is also per-archive (see `manifest_object_key(snapshot_date, archive_file)`).
+
+**Module entry points:**
+
+| Layer | Class | Parameterized fields |
+|---|---|---|
+| Download | `MatchDataDownloader` | `archive_file`, `archive_url`, `min_expected_bytes`, `dag_id` |
+| Extract | `MatchDataExtractor` | `archive_file` (derives `archive_stem`) |
+| Bronze load | `MatchBronzeLoader` | `archive_file`, `archive_url`, `dag_id` |
+| Bronze DQ | `MatchBronzeDQChecker` | `archive_file` |
+
+Defaults of every factory preserve the legacy "full backfill" behavior — the daily pipeline overrides them via the constants in `cip.ingestion.jobs.ingest_match_data_last_2_days`.
+
 ### Writers
 
 - **`PolarsIcebergWriter.create_and_append()`** — for Bronze Polars jobs. Creates table on first run, appends thereafter. Always call with `layer=Layer.BRONZE` and `partition_cols=["_snapshot_date"]`.
@@ -334,6 +375,7 @@ Metabase v0.60.6 (OSS) + community DuckDB driver (`motherduckdb/metabase_duckdb_
 - Multi-wicket deliveries exist in the source — never assume `(match_id, innings_number, over_number, delivery_number)` is unique in `silver.wickets`.
 - Cricsheet player names are abbreviated initials (`V Kohli`, not `Virat Kohli`). Any consumer that needs display names must maintain a separate alias table — do not assume full names exist in `gold.fact_delivery.batter` or `gold.mart_player_batting.player_name`.
 - `player_of_match` in match JSON is an array and can contain the same name twice (data artefact). Always dedup with `QUALIFY ROW_NUMBER() OVER (PARTITION BY match_id, player_name ...)` when exploding this array.
+- Match JSON files in MinIO are partitioned by archive: `match_data/json/snapshot_date={date}/archive={stem}/…`. Anything that walks the JSON prefix (Bronze loader, DQ checks, manifest reader) must pass `archive_file` so it scopes to the right segment. Code paths that hardcode the prefix without the `archive=` segment will silently read another pipeline's files.
 
 ## graphify
 

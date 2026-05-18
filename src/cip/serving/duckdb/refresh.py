@@ -16,22 +16,40 @@ _BRONZE_TABLES = [
     "name_variations",
 ]
 
-_SILVER_TABLES = [
+# Silver match-grained tables — written by SparkIcebergWriter.delete_and_insert
+# under the audit-driven incremental Silver model. Iceberg v2 row-level deletes
+# guarantee one row per natural grain in the live table; DuckDB's iceberg_scan
+# honours those deletes (verified per docs/runbooks/duckdb-iceberg-deletes.md),
+# so the refresh is a plain SELECT * — no MAX(_snapshot_date) filter needed.
+_SILVER_MATCH_GRAINED_TABLES = [
     "matches",
     "innings",
     "deliveries",
     "wickets",
-    "teams",
-    "venues",
-    "competitions",
-    "persons",
-    "person_identifiers",
-    "name_variations",
     "match_players",
     "match_officials",
     "match_powerplays",
     "match_registry",
     "unmatched_persons_audit",
+]
+
+# Silver dim-shaped tables — written by SparkIcebergWriter.dynamic_overwrite.
+# They aggregate across the full Bronze corpus on every run and accumulate one
+# partition per write. Keep the MAX(_snapshot_date) filter — gives the latest
+# aggregate, ignores stale partitions.
+_SILVER_DIM_SHAPED_TABLES = [
+    "teams",
+    "venues",
+    "competitions",
+]
+
+# People & Names Silver tables — still written by the legacy register pipeline.
+# Keep the existing MAX(_snapshot_date) filter until that pipeline migrates
+# to the audit-driven model in a separate PR.
+_SILVER_REGISTER_TABLES = [
+    "persons",
+    "person_identifiers",
+    "name_variations",
 ]
 
 _INIT_SQL = Path(__file__).parent / "init.sql"
@@ -74,6 +92,7 @@ class DuckDBRefresh:
         self.bootstrap()
         self.create_bronze_views()
         self.create_silver_views()
+        self.create_control_views()
         self.run_dbt("run", select=dbt_select)
         if dbt_test:
             self.run_dbt("test", select=dbt_select)
@@ -125,16 +144,37 @@ class DuckDBRefresh:
         IMPORTANT: no trailing slash on S3 paths. DuckDB's iceberg extension
         appends '/metadata/…' to this path, and a trailing '/' here produces
         '…/matches//metadata/…' which MinIO rejects (XMinioInvalidObjectName).
+
+        Two SQL shapes:
+          - Match-grained tables (writes via delete_and_insert): plain
+            SELECT *. Iceberg v2 row-level deletes keep one row per natural
+            grain in the live view, and DuckDB honours those deletes.
+          - Dim-shaped + register tables (writes via dynamic_overwrite):
+            keep the MAX(_snapshot_date) filter. These re-aggregate the
+            full corpus on every write and accumulate partitions; the
+            filter gives the latest aggregate and ignores stale ones.
         """
         conn = self._get_connection()
+        total = 0
         try:
             self._configure_session(conn)
-            for table in _SILVER_TABLES:
+
+            # Match-grained tables — plain SELECT *
+            for table in _SILVER_MATCH_GRAINED_TABLES:
                 self._drop_if_view(conn, "silver", table)
                 path = f"s3://{self._bucket}/silver/{table}"
-                # Silver Iceberg tables accumulate one partition per pipeline
-                # run (_snapshot_date). Keep only the latest so downstream
-                # (dbt + UI queries) sees a single, deduped picture.
+                sql = (
+                    f"CREATE OR REPLACE TABLE silver.{table} AS "
+                    f"SELECT * FROM iceberg_scan('{path}')"
+                )
+                conn.execute(sql)
+                logger.debug("Silver match-grained table materialised", extra={"table": table, "path": path})
+                total += 1
+
+            # Dim-shaped + register tables — MAX(_snapshot_date) filter
+            for table in _SILVER_DIM_SHAPED_TABLES + _SILVER_REGISTER_TABLES:
+                self._drop_if_view(conn, "silver", table)
+                path = f"s3://{self._bucket}/silver/{table}"
                 sql = (
                     f"CREATE OR REPLACE TABLE silver.{table} AS "
                     f"SELECT * FROM iceberg_scan('{path}') "
@@ -143,8 +183,39 @@ class DuckDBRefresh:
                     f")"
                 )
                 conn.execute(sql)
-                logger.debug("Silver table materialised", extra={"table": table, "path": path})
-            logger.info("Silver tables materialised", extra={"count": len(_SILVER_TABLES)})
+                logger.debug("Silver dim/register table materialised", extra={"table": table, "path": path})
+                total += 1
+
+            logger.info("Silver tables materialised", extra={"count": total})
+        finally:
+            conn.close()
+
+    def create_control_views(self) -> None:
+        """Materialise control.match_file_audit from PostgreSQL into DuckDB.
+
+        Gold dbt models filter by audit state for incremental builds:
+          WHERE match_id IN (
+              SELECT match_id FROM control.match_file_audit
+              WHERE gold_loaded_at IS NULL
+          )
+
+        This refresh produces a point-in-time snapshot of the audit log
+        inside the DuckDB file so dbt can query it without spinning up a
+        psycopg2 connection per model. Refresh frequency = once per Gold
+        DAG invocation, which matches the cadence of dbt-incremental Gold
+        runs.
+        """
+        conn = self._get_connection()
+        try:
+            self._configure_session(conn)
+            pg_conn_str = self._postgres_libpq_dsn()
+            sql = (
+                "CREATE OR REPLACE TABLE control.match_file_audit AS "
+                f"SELECT * FROM postgres_scan('{pg_conn_str}', 'control', 'match_file_audit')"
+            )
+            conn.execute(sql)
+            row_count = conn.execute("SELECT COUNT(*) FROM control.match_file_audit").fetchone()[0]
+            logger.info("control.match_file_audit refreshed", extra={"rows": row_count})
         finally:
             conn.close()
 
@@ -192,6 +263,16 @@ class DuckDBRefresh:
         conn.execute(f"SET memory_limit='{self._cfg.duckdb.memory_limit}'")
         conn.execute(f"SET threads={self._cfg.duckdb.threads}")
         return conn
+
+    def _postgres_libpq_dsn(self) -> str:
+        """Return a libpq-compatible Postgres connection string for DuckDB's
+        postgres_scan / postgres_attach functions.
+
+        Settings store `postgresql+psycopg2://user:pass@host:port/dbname` —
+        strip the `+psycopg2` dialect tag, DuckDB's postgres extension parses
+        the rest natively.
+        """
+        return self._cfg.postgres.dsn.replace("postgresql+psycopg2://", "postgresql://")
 
     def _drop_if_view(self, conn, schema: str, name: str) -> None:
         """Drop a legacy view if one exists at this name.
