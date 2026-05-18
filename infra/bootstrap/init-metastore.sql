@@ -445,6 +445,80 @@ COMMENT ON VIEW control.v_latest_archive_snapshot IS
     'Quick view of the most recent successful download per Cricsheet archive ZIP.';
 
 -- ============================================================================
+-- TABLE: control.match_file_audit
+--
+-- Per-file (file_name, content_hash) audit log spanning the full
+-- match-data pipeline: landing → bronze → archive → silver → gold.
+--
+-- The single source of truth for whether a given JSON blob has been
+-- processed at each layer. Drives:
+--   1. Bronze skip-on-duplicate (filename + content_hash lookup) so the
+--      daily incremental DAG's 2-day overlap costs zero Bronze rows.
+--   2. Silver incremental scoping (pending_silver_match_ids → DELETE+INSERT
+--      per match_id; no MERGE INTO).
+--   3. Gold incremental scoping (pending_gold_match_ids → dbt incremental
+--      models filter via WHERE match_id IN (...)).
+--
+-- PK is (file_name, content_hash) — *not* archive_file — so the same
+-- byte-identical match seen via both archives (full + incremental) collapses
+-- to one audit row.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS control.match_file_audit (
+    file_name              TEXT        NOT NULL,
+    content_hash           TEXT        NOT NULL,            -- sha256 hex of JSON bytes
+    match_id               TEXT        NOT NULL,            -- file stem (Cricsheet ID)
+    file_type              TEXT        NOT NULL DEFAULT 'json',
+
+    -- Provenance
+    archive_file           TEXT        NOT NULL,            -- 'all_json.zip' | 'recently_added_2_json.zip' | 'bootstrap'
+    archive_download_id    BIGINT      REFERENCES control.archive_download_log(id),
+    landing_path           TEXT        NOT NULL,            -- s3://… path of the landing object (per-archive prefix)
+    archive_path           TEXT,                            -- s3://… path under match_data/archive/… (NULL until copied)
+    loaded_by_pipeline     TEXT        NOT NULL,            -- 'full' | 'incremental' | 'bootstrap'
+
+    -- 5-stage status (TIMESTAMPTZ = when reached that stage; NULL = not yet)
+    landing_loaded_at      TIMESTAMPTZ NOT NULL,
+    bronze_loaded_at       TIMESTAMPTZ,
+    archived_at            TIMESTAMPTZ,
+    silver_loaded_at       TIMESTAMPTZ,
+    gold_loaded_at         TIMESTAMPTZ,
+
+    -- Bronze revision linkage
+    revision               INT,
+    pipeline_run_id        TEXT        NOT NULL,
+
+    -- Audit
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (file_name, content_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_match_file_audit_match_id
+    ON control.match_file_audit (match_id);
+
+CREATE INDEX IF NOT EXISTS idx_match_file_audit_silver_pending
+    ON control.match_file_audit (match_id)
+    WHERE silver_loaded_at IS NULL AND bronze_loaded_at IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_match_file_audit_gold_pending
+    ON control.match_file_audit (match_id)
+    WHERE gold_loaded_at IS NULL AND silver_loaded_at IS NOT NULL;
+
+COMMENT ON TABLE control.match_file_audit IS
+    'Per-file 5-stage audit log for the match-data pipeline. '
+    'Drives Bronze skip-on-duplicate, incremental Silver scoping, and incremental Gold scoping. '
+    'PK (file_name, content_hash) collapses identical files seen via multiple archives.';
+
+DROP TRIGGER IF EXISTS trg_match_file_audit_updated_at
+    ON control.match_file_audit;
+
+CREATE TRIGGER trg_match_file_audit_updated_at
+    BEFORE UPDATE ON control.match_file_audit
+    FOR EACH ROW EXECUTE FUNCTION control.set_updated_at();
+
+-- ============================================================================
 -- DONE
 -- ============================================================================
 SELECT 'control schema bootstrap complete' AS result;
