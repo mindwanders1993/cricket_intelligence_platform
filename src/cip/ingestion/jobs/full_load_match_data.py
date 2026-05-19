@@ -5,7 +5,8 @@
 # Source archive: https://cricsheet.org/downloads/all_json.zip
 #   — ~1 GB, ~21k match JSON files. Manual trigger only; never scheduled.
 #
-# Pipeline stages (six task callables wired into dag_full_load_match_data):
+# Pipeline stages (six task callables wired into ingest_all_match_data_bronze /
+#                  ingest_all_match_data_silver):
 #   task_download_archive  → all_json.zip → MinIO landing
 #   task_extract_archive   → JSONs → match_data/json/snapshot_date=…/archive=all_json/
 #                            + stamp landing_loaded_at in control.match_file_audit
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 ARCHIVE_URL = "https://cricsheet.org/downloads/all_json.zip"
 ARCHIVE_FILE = "all_json.zip"
-DAG_ID = "dag_full_load_match_data"
+DAG_ID = "ingest_all_match_data_bronze"
 LOADED_BY_PIPELINE = "full"
 
 # all_json.zip is ~1 GB. Anything under 10 MB is a truncated download.

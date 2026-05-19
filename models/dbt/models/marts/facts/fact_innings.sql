@@ -1,3 +1,9 @@
+{{ config(
+    materialized='incremental',
+    unique_key=['match_id', 'innings_number'],
+    on_schema_change='sync_all_columns'
+) }}
+
 -- Grain: one row per innings per match.
 with innings as (
     select * from {{ ref('stg_silver_innings') }}
@@ -46,3 +52,10 @@ select
 from innings i
 join match_context mc using (match_id)
 left join delivery_totals dt using (match_id, innings_number)
+
+{% if is_incremental() %}
+WHERE match_id IN (
+  SELECT match_id FROM control.match_file_audit
+  WHERE gold_loaded_at IS NULL
+)
+{% endif %}

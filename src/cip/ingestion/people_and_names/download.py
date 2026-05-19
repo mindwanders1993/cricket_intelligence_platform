@@ -407,7 +407,7 @@ class PeopleAndNamesDownloader:
                     sql,
                     (
                         result.pipeline_run_id,
-                        "dag_ingest_people_and_names",
+                        "ingest_people_and_names_bronze",
                         result.source_file,
                         result.source_url,
                         result.snapshot_date,

@@ -351,20 +351,21 @@ class DagNames:
     Used in pipeline_watermark seeds and cross-DAG trigger logic.
     """
 
-    # Match-data DAGs — full + incremental pipelines, audit-driven.
-    FULL_LOAD_MATCH_DATA: str = "dag_full_load_match_data"
-    INCREMENTAL_MATCH_DATA: str = "dag_incremental_match_data"
+    # People & Names — bronze ingestion and silver promotion run separately.
+    INGEST_PEOPLE_AND_NAMES_BRONZE: str = "ingest_people_and_names_bronze"
+    INGEST_PEOPLE_AND_NAMES_SILVER: str = "ingest_people_and_names_silver"
 
-    # Gold DAGs — full-refresh + incremental dbt, manual triggers only.
-    FULL_LOAD_GOLD: str = "dag_full_load_gold"
-    INCREMENTAL_GOLD: str = "dag_incremental_gold"
+    # Full-load match data — bronze and silver run separately; bronze auto-triggers silver.
+    INGEST_ALL_MATCH_DATA_BRONZE: str = "ingest_all_match_data_bronze"
+    INGEST_ALL_MATCH_DATA_SILVER: str = "ingest_all_match_data_silver"
+    INGEST_ALL_MATCH_DATA_GOLD: str = "ingest_all_match_data_gold"
 
-    # Legacy Gold DAG — kept until PR 3 splits Gold into the two new DAGs above.
-    RUN_GOLD_DBT: str = "dag_run_gold_dbt_models"
+    # Incremental (2-day) match data — bronze auto-triggers silver; gold is manual.
+    INGEST_TWO_DAY_MATCH_DATA_BRONZE: str = "ingest_two_day_match_data_bronze"
+    INGEST_TWO_DAY_MATCH_DATA_SILVER: str = "ingest_two_day_match_data_silver"
+    INGEST_TWO_DAY_MATCH_DATA_GOLD: str = "ingest_two_day_match_data_gold"
 
-    # Peer pipelines (People & Names, ML, AI refresh, etc.)
-    INGEST_PEOPLE_AND_NAMES: str = "dag_ingest_people_and_names"
-    BUILD_SILVER_PEOPLE_AND_NAMES: str = "dag_build_silver_people_and_names"
+    # Future / placeholder pipelines (not yet implemented).
     PARSE_BRONZE_MATCH_DATA: str = "dag_parse_bronze_match_data"
     RUN_QUALITY: str = "dag_run_quality_checks"
     REFRESH_SERVING: str = "dag_refresh_serving_layer"
@@ -374,14 +375,15 @@ class DagNames:
     @classmethod
     def all(cls) -> list[str]:
         return [
-            cls.FULL_LOAD_MATCH_DATA,
-            cls.INCREMENTAL_MATCH_DATA,
-            cls.FULL_LOAD_GOLD,
-            cls.INCREMENTAL_GOLD,
-            cls.INGEST_PEOPLE_AND_NAMES,
-            cls.BUILD_SILVER_PEOPLE_AND_NAMES,
+            cls.INGEST_PEOPLE_AND_NAMES_BRONZE,
+            cls.INGEST_PEOPLE_AND_NAMES_SILVER,
+            cls.INGEST_ALL_MATCH_DATA_BRONZE,
+            cls.INGEST_ALL_MATCH_DATA_SILVER,
+            cls.INGEST_ALL_MATCH_DATA_GOLD,
+            cls.INGEST_TWO_DAY_MATCH_DATA_BRONZE,
+            cls.INGEST_TWO_DAY_MATCH_DATA_SILVER,
+            cls.INGEST_TWO_DAY_MATCH_DATA_GOLD,
             cls.PARSE_BRONZE_MATCH_DATA,
-            cls.RUN_GOLD_DBT,
             cls.RUN_QUALITY,
             cls.REFRESH_SERVING,
             cls.TRAIN_ML,

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import tempfile
 import time
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +34,53 @@ _DAG_ID = "dag_ingest_match_data"
 DEFAULT_ARCHIVE_URL = _ARCHIVE_URL
 DEFAULT_ARCHIVE_FILE = _ARCHIVE_FILE
 DEFAULT_MIN_EXPECTED_BYTES = _MIN_EXPECTED_BYTES
+
+
+def _stream_download(
+    url: str,
+    dest_path: Path,
+    *,
+    retries: int = 5,
+    chunk_size: int = 1024 * 1024,
+) -> None:
+    """Stream-download url to dest_path with resume and internal retry.
+
+    Uses HTTP Range requests so a partial file is continued rather than
+    restarted.  If the server returns 200 instead of 206 it does not support
+    Range — the file is restarted from byte 0.  Retries up to `retries` times
+    with exponential backoff before propagating the exception.
+    """
+    import requests  # noqa: PLC0415
+
+    for attempt in range(1, retries + 2):  # attempts 1..retries+1
+        try:
+            downloaded = dest_path.stat().st_size if dest_path.exists() else 0
+            headers = {"Range": f"bytes={downloaded}-"} if downloaded else {}
+            mode = "ab" if downloaded else "wb"
+
+            with requests.get(url, headers=headers, stream=True, timeout=120) as resp:
+                if resp.status_code == 200 and downloaded:
+                    # Server ignored the Range header — restart from scratch.
+                    downloaded = 0
+                    mode = "wb"
+                elif resp.status_code not in (200, 206):
+                    resp.raise_for_status()
+
+                with open(dest_path, mode) as fh:
+                    for chunk in resp.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            fh.write(chunk)
+            return  # success
+
+        except Exception as exc:
+            if attempt > retries:
+                raise
+            wait = 2**attempt
+            logger.warning(
+                "Download attempt failed — retrying",
+                extra={"attempt": attempt, "wait_seconds": wait, "error": str(exc)},
+            )
+            time.sleep(wait)
 
 
 @dataclass(frozen=True)
@@ -136,7 +182,7 @@ class MatchDataDownloader:
                     "Downloading archive",
                     extra={"url": self._archive_url, "snapshot_date": snapshot_date},
                 )
-                urllib.request.urlretrieve(self._archive_url, local_path)  # noqa: S310
+                _stream_download(self._archive_url, local_path)
 
                 file_size = local_path.stat().st_size
                 if file_size < self._min_expected_bytes:

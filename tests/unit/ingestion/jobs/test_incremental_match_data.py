@@ -20,7 +20,7 @@ class TestPipelineIdentity:
 
         assert mod.ARCHIVE_FILE == "recently_added_2_json.zip"
         assert mod.ARCHIVE_URL == "https://cricsheet.org/downloads/recently_added_2_json.zip"
-        assert mod.DAG_ID == "dag_incremental_match_data"
+        assert mod.DAG_ID == "ingest_two_day_match_data_bronze"
         assert mod.LOADED_BY_PIPELINE == "incremental"
         assert mod.MIN_EXPECTED_BYTES == 50 * 1024
 
@@ -51,7 +51,7 @@ class TestTaskDownloadArchive:
         assert kwargs["archive_file"] == "recently_added_2_json.zip"
         assert kwargs["archive_url"] == "https://cricsheet.org/downloads/recently_added_2_json.zip"
         assert kwargs["min_expected_bytes"] == 50 * 1024
-        assert kwargs["dag_id"] == "dag_incremental_match_data"
+        assert kwargs["dag_id"] == "ingest_two_day_match_data_bronze"
         assert payload["archive_download_id"] == 11
 
 
@@ -95,7 +95,7 @@ class TestTaskLoadBronze:
 
         kwargs = MockCls.from_settings.call_args.kwargs
         assert kwargs["archive_file"] == "recently_added_2_json.zip"
-        assert kwargs["dag_id"] == "dag_incremental_match_data"
+        assert kwargs["dag_id"] == "ingest_two_day_match_data_bronze"
         assert payload["rows_written"] == 5
         assert payload["files_skipped_by_audit"] == 25
 
@@ -119,7 +119,7 @@ class TestTaskRunDq:
         assert kwargs["archive_file"] == "recently_added_2_json.zip"
 
         call = instance.run_all.call_args
-        assert call.kwargs["dag_id"] == "dag_incremental_match_data"
+        assert call.kwargs["dag_id"] == "ingest_two_day_match_data_bronze"
         assert payload["passed"] == 4
 
 

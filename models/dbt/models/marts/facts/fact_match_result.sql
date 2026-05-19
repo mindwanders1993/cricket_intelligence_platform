@@ -1,3 +1,9 @@
+{{ config(
+    materialized='incremental',
+    unique_key='match_id',
+    on_schema_change='sync_all_columns'
+) }}
+
 -- Grain: one row per match.
 -- Extends dim_match with two derived columns: toss_winner_won, loser.
 select
@@ -27,3 +33,10 @@ select
     end                                                             as loser,
     _snapshot_date
 from {{ ref('dim_match') }}
+
+{% if is_incremental() %}
+WHERE match_id IN (
+  SELECT match_id FROM control.match_file_audit
+  WHERE gold_loaded_at IS NULL
+)
+{% endif %}

@@ -233,7 +233,7 @@ class TestMatchDataDownloaderArchiveOverride:
             archive_file=self._CUSTOM_FILE,
             archive_url=self._CUSTOM_URL,
             min_expected_bytes=self._CUSTOM_MIN_BYTES,
-            dag_id="dag_ingest_match_data_last_2_days",
+            dag_id="ingest_two_day_match_data_bronze",
         )
 
     def test_uses_custom_url_for_download(self, tmp_path):
@@ -302,13 +302,13 @@ class TestMatchDataDownloaderArchiveOverride:
                 archive_file=self._CUSTOM_FILE,
                 archive_url=self._CUSTOM_URL,
                 min_expected_bytes=self._CUSTOM_MIN_BYTES,
-                dag_id="dag_ingest_match_data_last_2_days",
+                dag_id="ingest_two_day_match_data_bronze",
             )
 
         assert downloader._archive_file == self._CUSTOM_FILE
         assert downloader._archive_url == self._CUSTOM_URL
         assert downloader._min_expected_bytes == self._CUSTOM_MIN_BYTES
-        assert downloader._dag_id == "dag_ingest_match_data_last_2_days"
+        assert downloader._dag_id == "ingest_two_day_match_data_bronze"
 
 
 class TestMatchDataDownloaderFailures:

@@ -93,6 +93,7 @@ class DuckDBRefresh:
         self.create_bronze_views()
         self.create_silver_views()
         self.create_control_views()
+        self.run_dbt("seed")
         self.run_dbt("run", select=dbt_select)
         if dbt_test:
             self.run_dbt("test", select=dbt_select)
@@ -219,16 +220,20 @@ class DuckDBRefresh:
         finally:
             conn.close()
 
-    def run_dbt(self, command: str, select: str | None = None) -> None:
+    def run_dbt(self, command: str, select: str | None = None, full_refresh: bool = False) -> None:
         cfg = self._cfg
         cmd = [
             "dbt",
             command,
             "--project-dir", str(cfg.dbt.project_dir),
+        ]
+        if full_refresh:
+            cmd.append("--full-refresh")
+        cmd.extend([
             "--profiles-dir", str(cfg.dbt.profiles_dir),
             "--target", cfg.dbt.target,
             "--threads", str(cfg.dbt.threads),
-        ]
+        ])
         if select:
             cmd += ["--select", select]
 

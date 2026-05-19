@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 ARCHIVE_URL = "https://cricsheet.org/downloads/recently_added_2_json.zip"
 ARCHIVE_FILE = "recently_added_2_json.zip"
-DAG_ID = "dag_incremental_match_data"
+DAG_ID = "ingest_two_day_match_data_bronze"
 LOADED_BY_PIPELINE = "incremental"
 
 # Real archive is ~200 KB; treat anything under 50 KB as truncated/empty.

@@ -1,6 +1,6 @@
 ---
 name: cip-pipeline-run
-description: "Run any Cricket Intelligence Platform pipeline locally (ingest_people_and_names, ingest_match_data, build_silver_people_and_names, build_silver_match_data) with the correct env-var soup pre-applied. Use when the user wants to manually trigger a Bronze ingest or Silver build without going through Airflow — e.g. 'rerun yesterday's match ingest', 'rebuild Silver people for 2026-05-10'."
+description: "Run any Cricket Intelligence Platform pipeline locally (ingest_people_and_names, full_load_match_data, incremental_match_data, build_silver_people_and_names, build_silver_match_data) with the correct env-var soup pre-applied. Use when the user wants to manually trigger a Bronze ingest or Silver build without going through Airflow — e.g. 'rerun yesterday's match ingest', 'rebuild Silver people for 2026-05-10'."
 trigger: /cip-pipeline-run
 ---
 
@@ -23,7 +23,8 @@ Thin wrapper that runs one of the four CIP ingestion/transform jobs from the hos
 | Pipeline | Tasks | Engine |
 |---|---|---|
 | `people-bronze` (or `ingest_people_and_names`) | `download`, `bronze`, `all` | Polars |
-| `match-bronze` (or `ingest_match_data`) | `download`, `extract`, `bronze`, `dq`, `all` | Polars |
+| `match-bronze-full` (or `full_load_match_data`) | `download`, `extract`, `bronze`, `dq`, `all` | Polars |
+| `match-bronze-incremental` (or `incremental_match_data`) | `download`, `extract`, `bronze`, `dq`, `all` | Polars |
 | `people-silver` (or `build_silver_people_and_names`) | `silver`, `dq`, `dbt`, `all` | Polars |
 | `match-silver` (or `build_silver_match_data`) | `check`, `silver`, `all` | **PySpark** |
 
@@ -50,7 +51,8 @@ If pipeline is ambiguous, **ask** with `AskUserQuestion` — do not guess betwee
 | Pipeline alias | Python module |
 |---|---|
 | `people-bronze` | `cip.ingestion.jobs.ingest_people_and_names` |
-| `match-bronze` | `cip.ingestion.jobs.ingest_match_data` |
+| `match-bronze-full` | `cip.ingestion.jobs.full_load_match_data` |
+| `match-bronze-incremental` | `cip.ingestion.jobs.incremental_match_data` |
 | `people-silver` | `cip.ingestion.jobs.build_silver_people_and_names` |
 | `match-silver` | `cip.ingestion.jobs.build_silver_match_data` |
 

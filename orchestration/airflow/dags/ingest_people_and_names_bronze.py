@@ -1,6 +1,6 @@
-# orchestration/airflow/dags/dag_ingest_people_and_names.py
+# orchestration/airflow/dags/ingest_people_and_names_bronze.py
 #
-# DAG: dag_ingest_people_and_names
+# DAG: ingest_people_and_names_bronze
 #
 # Purpose:
 #   Cricsheet Register pipeline: Download + Land → Bronze Iceberg load.
@@ -8,7 +8,7 @@
 #                          → bronze.people_identifiers
 #                          → bronze.name_variations
 #
-# Silver promotion + DQ live in dag_build_silver_people_and_names.py
+# Silver promotion + DQ live in ingest_people_and_names_silver.py
 # and are triggered separately after this DAG completes.
 #
 # Schedule: Weekly on Sunday at 06:00 IST (00:30 UTC)
@@ -27,12 +27,10 @@
 #     _snapshot_date partition before re-writing (overwrite_snapshot).
 #
 # Manual trigger examples:
-#   # Normal weekly run with explicit date
-#   airflow dags trigger dag_ingest_people_and_names \
+#   airflow dags trigger ingest_people_and_names_bronze \
 #     --conf '{"snapshot_date": "2026-05-11"}'
 #
-#   # Force re-run for a past snapshot
-#   airflow dags trigger dag_ingest_people_and_names \
+#   airflow dags trigger ingest_people_and_names_bronze \
 #     --conf '{"snapshot_date": "2026-05-04", "force": true}'
 
 from __future__ import annotations
@@ -43,7 +41,9 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator, ShortCircuitOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
+from cip.common.contracts.naming import DagNames
 from cip.ingestion.jobs.ingest_people_and_names import (
     task_download_and_land,
     task_load_bronze,
@@ -202,23 +202,24 @@ def _log_schema_drift_alert(**context) -> None:
 # ---------------------------------------------------------------------------
 
 with DAG(
-    dag_id="dag_ingest_people_and_names",
+    dag_id="ingest_people_and_names_bronze",
     description=(
-        "Cricsheet Register pipeline: Download (people.csv + names.csv) " "→ MinIO landing → Bronze Iceberg tables"
+        "Cricsheet Register pipeline: Download (people.csv + names.csv) "
+        "→ MinIO landing → Bronze Iceberg tables"
     ),
     start_date=datetime(2026, 5, 1),
     schedule="30 0 * * 0",  # Sunday 00:30 UTC ≡ 06:00 IST
     catchup=False,
     max_active_runs=1,
     default_args=_DEFAULT_ARGS,
-    tags=["ingestion", "register", "landing", "bronze", "cricsheet"],
+    tags=["bronze", "cricsheet", "ingestion", "landing", "register"],
     doc_md="""
-## dag_ingest_people_and_names
+## ingest_people_and_names_bronze
 
 Downloads `people.csv` + `names.csv` from [cricsheet.org](https://cricsheet.org/register/)
 and writes them to three Bronze Iceberg tables.
 
-Silver promotion and DQ checks are handled by `dag_build_silver_people_and_names`.
+Silver promotion and DQ checks are handled by `ingest_people_and_names_silver`.
 
 ### Task graph
 
@@ -252,12 +253,10 @@ check_infra
 ### Manual trigger
 
 ```bash
-# Normal run
-airflow dags trigger dag_ingest_people_and_names \\
+airflow dags trigger ingest_people_and_names_bronze \\
   --conf '{"snapshot_date": "2026-05-11"}'
 
-# Force re-run for a historical snapshot
-airflow dags trigger dag_ingest_people_and_names \\
+airflow dags trigger ingest_people_and_names_bronze \\
   --conf '{"snapshot_date": "2026-05-04", "force": true}'
 ```
 
@@ -312,7 +311,8 @@ airflow dags trigger dag_ingest_people_and_names \\
         task_id="schema_drift_alert",
         python_callable=_log_schema_drift_alert,
         doc_md=(
-            "Emits structured WARNING log per drifted file. " "Wire to Slack/PagerDuty webhook for production alerting."
+            "Emits structured WARNING log per drifted file. "
+            "Wire to Slack/PagerDuty webhook for production alerting."
         ),
     )
 
@@ -339,7 +339,18 @@ airflow dags trigger dag_ingest_people_and_names \\
         ),
     )
 
-    # ── Task 4: Done marker ──────────────────────────────────────────────────
+    # ── Task 4: Trigger silver ───────────────────────────────────────────────
+    trigger_silver = TriggerDagRunOperator(
+        task_id="trigger_silver",
+        trigger_dag_id=DagNames.INGEST_PEOPLE_AND_NAMES_SILVER,
+        wait_for_completion=False,  # bronze completes independently; watch silver in its own run
+        reset_dag_run=False,
+        conf={"snapshot_date": _SNAPSHOT_DATE, "pipeline_run_id": _PIPELINE_RUN_ID},
+        execution_timeout=timedelta(minutes=2),
+        doc_md="Fires ingest_people_and_names_silver. Can also be run standalone.",
+    )
+
+    # ── Task 5: Done marker ──────────────────────────────────────────────────
     done = EmptyOperator(
         task_id="done",
         trigger_rule="all_done",
@@ -352,11 +363,9 @@ airflow dags trigger dag_ingest_people_and_names \\
     #       └─► download_and_land
     #             ├─► schema_drift_check ──► schema_drift_alert
     #             └─► load_bronze
-    #                   └─► done
-    #
-    # Note: load_bronze trigger_rule=all_done ensures Bronze runs whether or
-    # not the schema drift branch fires. schema_drift_alert is informational.
+    #                   └─► trigger_silver
+    #                         └─► done
     #
     check_infra >> download_and_land
     download_and_land >> schema_drift_check >> schema_drift_alert
-    download_and_land >> load_bronze >> done
+    download_and_land >> load_bronze >> trigger_silver >> done

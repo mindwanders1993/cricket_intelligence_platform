@@ -400,7 +400,7 @@ Always ask "what are you assuming about this table's grain?" before approving a 
 You cannot assume key uniqueness in Silver tables without checking. Run the inspect skill — it takes 10 seconds and has saved hours of debugging.
 
 **Forgetting `make duckdb-stop` before the Gold DAG.**
-The DuckDB UI holds a write lock. The DAG's `refresh_duckdb_views` task will fail with a file-lock error. Always stop the UI before triggering `dag_run_gold_dbt_models`.
+The DuckDB UI holds a write lock. The DAG's `refresh_duckdb_views` task will fail with a file-lock error. Always stop the UI before triggering `ingest_all_match_data_gold` or `ingest_two_day_match_data_gold`.
 
 **Using `isort` instead of `ruff --fix` for import sorting.**
 `ruff` reports `I001` import-order errors. `isort` and `ruff --fix` produce different results — always use `ruff check --fix .` to resolve import errors reported by ruff. Running bare `isort` will not satisfy ruff's checks.

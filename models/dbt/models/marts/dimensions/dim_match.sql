@@ -1,3 +1,9 @@
+{{ config(
+    materialized='incremental',
+    unique_key='match_id',
+    on_schema_change='sync_all_columns'
+) }}
+
 select
     match_id,
     season,
@@ -22,3 +28,8 @@ select
     win_by_innings,
     _snapshot_date
 from {{ ref('stg_silver_matches') }}
+{% if is_incremental() %}
+where match_id in (
+    select match_id from control.match_file_audit where gold_loaded_at is null
+)
+{% endif %}

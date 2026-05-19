@@ -1,16 +1,16 @@
-# orchestration/airflow/dags/dag_build_silver_people_and_names.py
+# orchestration/airflow/dags/ingest_people_and_names_silver.py
 #
-# DAG: dag_build_silver_people_and_names
+# DAG: ingest_people_and_names_silver
 #
 # Purpose:
 #   Promote Bronze Register tables to Silver Iceberg tables and run DQ checks.
-#   Runs after dag_ingest_people_and_names completes.
+#   Runs after ingest_people_and_names_bronze completes.
 #
 #   bronze.people          → silver.persons
 #   bronze.people_identifiers     → silver.person_identifiers
 #   bronze.name_variations → silver.name_variations
 #
-# Schedule: Weekly on Sunday at 07:00 IST (01:30 UTC) — 1h after ingest DAG
+# Schedule: Weekly on Sunday at 07:00 IST (01:30 UTC) — 1h after bronze DAG
 #
 # Task graph:
 #
@@ -23,7 +23,7 @@
 #   same snapshot_date replace only that partition, leaving others intact.
 #
 # Manual trigger examples:
-#   airflow dags trigger dag_build_silver_people_and_names \
+#   airflow dags trigger ingest_people_and_names_silver \
 #     --conf '{"snapshot_date": "2026-05-11"}'
 
 from __future__ import annotations
@@ -69,22 +69,22 @@ _PIPELINE_RUN_ID = "{{ run_id }}"
 # ---------------------------------------------------------------------------
 
 with DAG(
-    dag_id="dag_build_silver_people_and_names",
+    dag_id="ingest_people_and_names_silver",
     description=(
         "Register Silver build: Bronze Register tables → Silver persons / "
         "person_identifiers / name_variations + DQ checks"
     ),
     start_date=datetime(2026, 5, 1),
-    schedule="30 1 * * 0",  # Sunday 01:30 UTC ≡ 07:00 IST (1h after ingest DAG)
+    schedule="30 1 * * 0",  # Sunday 01:30 UTC ≡ 07:00 IST (1h after bronze DAG)
     catchup=False,
     max_active_runs=1,
     default_args=_DEFAULT_ARGS,
-    tags=["silver", "register", "dq", "cricsheet"],
+    tags=["silver", "cricsheet", "register", "dq"],
     doc_md="""
-## dag_build_silver_people_and_names
+## ingest_people_and_names_silver
 
 Promotes three Bronze Register tables to Silver Iceberg tables and runs
-Register DQ checks. Designed to run after `dag_ingest_people_and_names` completes.
+Register DQ checks. Designed to run after `ingest_people_and_names_bronze` completes.
 
 ### Task graph
 
@@ -124,7 +124,7 @@ replaces only that partition. Safe to re-trigger without data duplication.
 ### Manual trigger
 
 ```bash
-airflow dags trigger dag_build_silver_people_and_names \\
+airflow dags trigger ingest_people_and_names_silver \\
   --conf '{"snapshot_date": "2026-05-11"}'
 ```
 

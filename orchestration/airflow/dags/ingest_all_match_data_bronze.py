@@ -1,12 +1,19 @@
-# orchestration/airflow/dags/dag_full_load_match_data.py
+# orchestration/airflow/dags/ingest_all_match_data_bronze.py
 #
-# DAG: dag_full_load_match_data
+# DAG: ingest_all_match_data_bronze
 #
 # Purpose:
-#   Manual full-load Cricsheet pipeline. Downloads all_json.zip (~1 GB,
-#   ~21k matches), extracts JSONs, loads to Bronze, runs DQ, and rebuilds
-#   the incremental Silver layer for every match_id whose Bronze content
-#   has new revisions (or all of them, on a fresh deploy).
+#   Manual full-load Cricsheet pipeline: Bronze layer only.
+#   Downloads all_json.zip (~1 GB, ~21k matches), extracts JSONs,
+#   loads to Bronze Iceberg with audit-skip, runs DQ, then
+#   auto-triggers ingest_all_match_data_silver.
+#
+# Silver runs in a separate DAG (ingest_all_match_data_silver) and
+# can also be triggered independently.
+#
+# Gold (ingest_all_match_data_gold) is NOT auto-triggered —
+# Metabase holds a DuckDB read lock. Run Gold manually after stopping the
+# Metabase container.
 #
 # Schedule: None — operator triggers manually via Airflow UI / CLI.
 #
@@ -17,16 +24,12 @@
 #             └─► extract_archive
 #                   └─► load_bronze
 #                         └─► run_dq
-#                               └─► build_silver
+#                               └─► trigger_silver
 #                                     └─► done
 #
-# Gold (dag_full_load_gold / dag_incremental_gold) is NOT auto-triggered —
-# Metabase holds a DuckDB read lock. Run Gold manually after stopping the
-# Metabase container.
-#
 # Manual trigger:
-#   airflow dags trigger dag_full_load_match_data
-#   airflow dags trigger dag_full_load_match_data \
+#   airflow dags trigger ingest_all_match_data_bronze
+#   airflow dags trigger ingest_all_match_data_bronze \
 #     --conf '{"snapshot_date": "2026-05-01", "force": true}'
 
 from __future__ import annotations
@@ -37,9 +40,10 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
+from cip.common.contracts.naming import DagNames
 from cip.ingestion.jobs.full_load_match_data import (
-    task_build_silver,
     task_download_archive,
     task_extract_archive,
     task_load_bronze,
@@ -93,21 +97,24 @@ def _check_infra(**context) -> None:
 
 
 with DAG(
-    dag_id="dag_full_load_match_data",
+    dag_id="ingest_all_match_data_bronze",
     description=(
-        "Manual full-load Cricsheet pipeline: download all_json.zip → "
-        "Bronze (audit-skip) → DQ → Silver (incremental delete_and_insert)."
+        "Manual full-load Cricsheet pipeline (Bronze): download all_json.zip → "
+        "Bronze (audit-skip) → DQ → trigger ingest_all_match_data_silver."
     ),
     start_date=datetime(2026, 5, 1),
     schedule=None,  # manual trigger only
     catchup=False,
     max_active_runs=1,
     default_args=_DEFAULT_ARGS,
-    tags=["ingestion", "full-load", "bronze", "silver", "cricsheet", "manual"],
+    tags=["bronze", "cricsheet", "ingestion", "full-load", "manual"],
     doc_md="""
-## dag_full_load_match_data
+## ingest_all_match_data_bronze
 
-Manual full-load Cricsheet pipeline. Operator-triggered only.
+Manual full-load Cricsheet pipeline — Bronze layer. Operator-triggered only.
+
+Automatically fires `ingest_all_match_data_silver` after DQ passes.
+Silver can also be run standalone without re-running this DAG.
 
 ### Task graph
 
@@ -116,31 +123,16 @@ check_infra
 └─► download_archive
       └─► extract_archive
             └─► load_bronze        (audit-skip on (filename, content_hash))
-                  └─► run_dq       (MAT-BRZ-001..004 incl. per-run audit coherence)
-                        └─► build_silver  (incremental delete_and_insert by match_id)
+                  └─► run_dq       (MAT-BRZ-001..004)
+                        └─► trigger_silver  (fires ingest_all_match_data_silver)
                               └─► done
 ```
-
-### Audit-log lifecycle
-
-- `extract_archive` stamps `landing_loaded_at` on every JSON it uploads.
-- `load_bronze` reads the audit log, drops files whose `(file_name, content_hash)`
-  is already `bronze_loaded_at IS NOT NULL`, then writes the surviving rows
-  and stamps `bronze_loaded_at + revision`. Each successful file is also
-  copied to `match_data/archive/processed_date={today}/` and `archive_path +
-  archived_at` are stamped.
-- `build_silver` queries `pending_silver_match_ids()` and scopes the Silver
-  pipeline to just those matches. Match-grained Silver tables use
-  `delete_and_insert(key_cols=["match_id"])`; dim-shaped tables (teams,
-  venues, competitions) always read full Bronze.
-
-Gold is NOT triggered — see CLAUDE.md for the Metabase DuckDB-lock dance.
 
 ### Manual trigger
 
 ```bash
-airflow dags trigger dag_full_load_match_data
-airflow dags trigger dag_full_load_match_data \\
+airflow dags trigger ingest_all_match_data_bronze
+airflow dags trigger ingest_all_match_data_bronze \\
   --conf '{"snapshot_date": "2026-05-01", "force": true}'
 ```
 """,
@@ -194,17 +186,15 @@ airflow dags trigger dag_full_load_match_data \\
         execution_timeout=timedelta(minutes=30),
     )
 
-    build_silver = PythonOperator(
-        task_id="build_silver",
-        python_callable=task_build_silver,
-        op_kwargs={
-            "snapshot_date": _SNAPSHOT_DATE,
-            "pipeline_run_id": _PIPELINE_RUN_ID,
-            "force": _FORCE,
-        },
-        execution_timeout=timedelta(hours=2),
+    trigger_silver = TriggerDagRunOperator(
+        task_id="trigger_silver",
+        trigger_dag_id=DagNames.INGEST_ALL_MATCH_DATA_SILVER,
+        wait_for_completion=False,  # bronze completes independently; watch silver in its own run
+        reset_dag_run=False,
+        conf={"snapshot_date": _SNAPSHOT_DATE, "pipeline_run_id": _PIPELINE_RUN_ID},
+        execution_timeout=timedelta(minutes=2),
     )
 
     done = EmptyOperator(task_id="done", trigger_rule="all_done")
 
-    check_infra >> download_archive >> extract_archive >> load_bronze >> run_dq >> build_silver >> done
+    check_infra >> download_archive >> extract_archive >> load_bronze >> run_dq >> trigger_silver >> done
