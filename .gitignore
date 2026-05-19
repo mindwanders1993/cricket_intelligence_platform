@@ -69,3 +69,11 @@ mlruns/
 validation/runs/*
 !validation/runs/.gitkeep
 .aider*
+
+# Dashboard (Observable Framework)
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.observablehq/cache/
+dashboard/.observablehq/deploy.json
+dashboard/src/.observablehq/cache/
+dashboard/.env
