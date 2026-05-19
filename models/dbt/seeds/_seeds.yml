@@ -1,0 +1,15 @@
+version: 2
+
+seeds:
+  - name: player_aliases
+    description: "Manual display-name overrides for Cricsheet abbreviated player names. Extend this file when new high-value players need to appear in Metabase dropdowns by full name."
+    columns:
+      - name: cricsheet_name
+        description: "Abbreviated name as it appears in Silver match data (e.g. 'V Kohli')"
+        tests:
+          - not_null
+          - unique
+      - name: display_name
+        description: "Full display name for the Metabase player dropdown (e.g. 'Virat Kohli')"
+        tests:
+          - not_null

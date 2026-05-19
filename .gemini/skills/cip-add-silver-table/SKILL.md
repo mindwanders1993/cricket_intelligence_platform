@@ -37,7 +37,7 @@ If invoked with `--help` or `-h`, print Usage and stop.
 
 ### Step 2 — Show the plan, get confirmation
 
-Use `AskUserQuestion` to confirm the scope. This skill **edits multiple files** — surface them first:
+Use `ask_user tool` to confirm the scope. This skill **edits multiple files** — surface them first:
 
 ```
 About to scaffold silver.<target>:

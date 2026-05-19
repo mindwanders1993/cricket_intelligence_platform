@@ -36,6 +36,10 @@ docker/
 .claude/projects/
 .claude/scheduled_tasks.lock
 
+# Gemini CLI local state
+.gemini/settings.local.json
+.gemini/tmp/
+
 .env
 *.log
 *.pid
