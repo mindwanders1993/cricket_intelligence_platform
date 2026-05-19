@@ -43,7 +43,7 @@ Build a player-portfolio dashboard with Virat Kohli as the showcase. Architectur
 
 ### Status
 - ✅ **M1 — Observable Framework scaffold** (commit `408894a` on branch `feat/dashboard-scaffold`)
-- ⬜ M2 — Project structure cleanup
+- ✅ M2 — Project structure cleanup
 - ⬜ M3 — Design system (CSS tokens)
 - ⬜ M4–M10 — Python data loaders
 - ⬜ M11–M20 — Chart components
