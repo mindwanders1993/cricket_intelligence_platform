@@ -119,6 +119,8 @@ class TableName:
             "fact_innings",
             "fact_match_result",
             "fact_player_match",
+            "fact_player_of_match",
+            "player_display_names",
             "mart_player_batting",
             "mart_player_bowling",
             "mart_team_performance",

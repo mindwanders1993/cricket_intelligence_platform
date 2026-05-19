@@ -63,6 +63,7 @@ exclude = [
     "*.ipynb",
     ".git",
     ".claude",
+    ".gemini",
     "__pycache__",
     "*.egg-info",
 ]
