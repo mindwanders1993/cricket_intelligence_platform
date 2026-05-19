@@ -2,11 +2,8 @@
 export default {
   title: "Cricket Intelligence: Player Portfolios",
 
-  // Sidebar is left to default (alphabetical) so the wizard's example pages
-  // stay visible as references during Phase 1. They'll be removed in M2 and
-  // a proper `pages` map added in M21 (page assembly).
-
-  head: '<link rel="icon" href="observable.png" type="image/png" sizes="32x32">',
+  // Sidebar shows only Home (index.md) after M2 cleanup.
+  // A proper `pages` map will be added in M21 (page assembly).
 
   root: "src",
 
