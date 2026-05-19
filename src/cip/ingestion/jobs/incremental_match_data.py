@@ -1,25 +1,22 @@
-# src/cip/ingestion/jobs/ingest_match_data.py
+# src/cip/ingestion/jobs/incremental_match_data.py
 #
-# Airflow-callable entry points for the Cricsheet archive ingestion pipeline.
-# Each Airflow task calls exactly one function from this module.
+# Airflow-callable entry points for the DAILY INCREMENTAL match-data pipeline.
 #
-# Pipeline stages:
-#   task_download_archive  → download all_json.zip to cricket-source-files/match_data/zip/
-#   task_extract_archive   → extract JSONs from ZIP to match_data/json/ prefix
-#   task_load_bronze       → read JSONs, parse, write to bronze.match_data
-#   task_run_dq            → run MAT-BRZ DQ checks, persist to control.dq_results
+# Source archive: https://cricsheet.org/downloads/recently_added_2_json.zip
+#   — ~200 KB, ~30 matches added in the last 2 days. Daily schedule
+#     at 02:00 UTC.
 #
-# Design:
-#   - Thin wrappers — all business logic lives in domain classes.
-#   - XCom payloads are plain dicts of JSON-serialisable primitives.
-#   - Jinja string coercion handled here for bool params.
+# Pipeline stages (same shape as the full-load pipeline; identical underlying
+# helpers; only the archive constants differ):
+#   task_download_archive  → recently_added_2_json.zip → MinIO landing
+#   task_extract_archive   → JSONs → match_data/json/snapshot_date=…/archive=recently_added_2_json/
+#   task_load_bronze       → bronze.match_data; audit-skip drops the 2-day overlap
+#   task_run_dq            → MAT-BRZ-001..004 (per-run audit coherence)
+#   task_build_silver      → MatchSilverPipeline.run_all(match_ids = audit pending)
 #
-# Called by:
-#   orchestration/airflow/dags/dag_ingest_match_data.py
-#
-# Manual invocation (dev):
-#   poetry run python -m cip.ingestion.jobs.ingest_match_data --task all
-#   poetry run python -m cip.ingestion.jobs.ingest_match_data --snapshot-date 2026-05-01 --task download
+# Audit-skip is what makes daily runs phantom-revision-free: every file in
+# this archive that already lives in Bronze (via prior full-load or prior
+# incremental) is dropped before Bronze write.
 
 from __future__ import annotations
 
@@ -29,6 +26,19 @@ import uuid
 from datetime import date
 
 logger = logging.getLogger(__name__)
+
+
+# ===========================================================================
+# Pipeline identity — daily incremental
+# ===========================================================================
+
+ARCHIVE_URL = "https://cricsheet.org/downloads/recently_added_2_json.zip"
+ARCHIVE_FILE = "recently_added_2_json.zip"
+DAG_ID = "ingest_two_day_match_data_bronze"
+LOADED_BY_PIPELINE = "incremental"
+
+# Real archive is ~200 KB; treat anything under 50 KB as truncated/empty.
+MIN_EXPECTED_BYTES = 50 * 1024
 
 
 # ===========================================================================
@@ -57,38 +67,27 @@ def task_download_archive(
     force: bool = False,
     **context,
 ) -> dict:
-    """
-    Airflow PythonOperator callable — Stage 1.
-
-    Downloads all_json.zip from cricsheet.org to MinIO landing zone and
-    records the attempt in control.archive_download_log.
-
-    XCom payload:
-        snapshot_date:       ISO date of this run
-        pipeline_run_id:     Airflow run_id
-        archive_download_id: FK into control.archive_download_log
-        landing_path:        s3://cricket-source-files/match_data/zip/snapshot_date=.../all_json.zip
-        file_size_bytes:     Archive size in bytes
-        checksum_sha256:     SHA-256 of the downloaded file
-        skipped:             True if idempotency guard fired
-    """
     from cip.ingestion.match_data.download import MatchDataDownloader
 
     force = _coerce_bool(force)
-
     logger.info(
-        "task_download_archive starting",
+        "task_download_archive (incremental) starting",
         extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id, "force": force},
     )
 
-    downloader = MatchDataDownloader.from_settings()
+    downloader = MatchDataDownloader.from_settings(
+        archive_file=ARCHIVE_FILE,
+        archive_url=ARCHIVE_URL,
+        min_expected_bytes=MIN_EXPECTED_BYTES,
+        dag_id=DAG_ID,
+    )
     record = downloader.download(
         snapshot_date=snapshot_date,
         pipeline_run_id=pipeline_run_id,
         force=force,
     )
 
-    payload = {
+    return {
         "snapshot_date": snapshot_date,
         "pipeline_run_id": pipeline_run_id,
         "archive_download_id": record.id,
@@ -97,9 +96,6 @@ def task_download_archive(
         "checksum_sha256": record.checksum_sha256,
         "skipped": record.status == "SUCCESS" and not force,
     }
-
-    logger.info("task_download_archive complete", extra=payload)
-    return payload
 
 
 # ===========================================================================
@@ -113,45 +109,31 @@ def task_extract_archive(
     force: bool = False,
     **context,
 ) -> dict:
-    """
-    Airflow PythonOperator callable — Stage 2.
-
-    Extracts all .json files from the source-files ZIP and uploads them to
-    the match_data/json prefix. Writes _manifest.json alongside.
-
-    XCom payload:
-        snapshot_date:    ISO date
-        pipeline_run_id:  Airflow run_id
-        file_count:       Number of JSON files extracted
-        extracted_prefix: s3:// prefix where JSONs were written
-        skipped:          True if idempotency guard fired
-    """
     from cip.ingestion.match_data.extract import MatchDataExtractor
 
     force = _coerce_bool(force)
-
     logger.info(
-        "task_extract_archive starting",
+        "task_extract_archive (incremental) starting",
         extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id, "force": force},
     )
 
-    extractor = MatchDataExtractor.from_settings()
+    extractor = MatchDataExtractor.from_settings(
+        archive_file=ARCHIVE_FILE,
+        loaded_by_pipeline=LOADED_BY_PIPELINE,
+    )
     result = extractor.extract(
         snapshot_date=snapshot_date,
         pipeline_run_id=pipeline_run_id,
         force=force,
     )
 
-    payload = {
+    return {
         "snapshot_date": snapshot_date,
         "pipeline_run_id": pipeline_run_id,
         "file_count": result.file_count,
         "extracted_prefix": result.extracted_prefix,
         "skipped": False,
     }
-
-    logger.info("task_extract_archive complete", extra=payload)
-    return payload
 
 
 # ===========================================================================
@@ -165,26 +147,10 @@ def task_load_bronze(
     force: bool = False,
     **context,
 ) -> dict:
-    """
-    Airflow PythonOperator callable — Stage 3.
-
-    Reads extracted JSON files from MinIO, parses header fields, attaches
-    revision numbers, and appends to bronze.match_data.
-
-    XCom payload:
-        snapshot_date:    ISO date
-        pipeline_run_id:  Airflow run_id
-        rows_written:     Total rows written to Iceberg
-        files_attempted:  JSON files read
-        files_succeeded:  JSON files successfully parsed
-        files_failed:     JSON files that raised parse errors
-        skipped:          True if idempotency guard fired
-    """
     from cip.transform.polars.bronze.match_data import MatchBronzeLoader
 
     force = _coerce_bool(force)
 
-    # Pull archive_download_id from XCom if available
     archive_download_id: int | None = None
     ti = context.get("ti")
     if ti is not None:
@@ -192,11 +158,15 @@ def task_load_bronze(
         archive_download_id = dl_payload.get("archive_download_id")
 
     logger.info(
-        "task_load_bronze starting",
+        "task_load_bronze (incremental) starting",
         extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id, "force": force},
     )
 
-    loader = MatchBronzeLoader.from_settings()
+    loader = MatchBronzeLoader.from_settings(
+        archive_file=ARCHIVE_FILE,
+        archive_url=ARCHIVE_URL,
+        dag_id=DAG_ID,
+    )
     result = loader.load(
         snapshot_date=snapshot_date,
         pipeline_run_id=pipeline_run_id,
@@ -204,22 +174,20 @@ def task_load_bronze(
         force=force,
     )
 
-    payload = {
+    return {
         "snapshot_date": snapshot_date,
         "pipeline_run_id": pipeline_run_id,
         "rows_written": result.rows_written,
         "files_attempted": result.files_attempted,
         "files_succeeded": result.files_succeeded,
         "files_failed": result.files_failed,
+        "files_skipped_by_audit": result.files_skipped_by_audit,
         "skipped": result.files_attempted == 0 and not force,
     }
 
-    logger.info("task_load_bronze complete", extra=payload)
-    return payload
-
 
 # ===========================================================================
-# Task 4 — Run DQ checks
+# Task 4 — Bronze DQ
 # ===========================================================================
 
 
@@ -228,37 +196,21 @@ def task_run_dq(
     pipeline_run_id: str,
     **context,
 ) -> dict:
-    """
-    Airflow PythonOperator callable — Stage 4.
-
-    Runs MAT-BRZ-001..004 DQ checks against Bronze Iceberg table,
-    control.bronze_match_ingestion_log, and the extraction manifest.
-    Results are persisted to control.dq_results.
-
-    Raises DQBlockingFailureError if any BLOCK severity check fails.
-
-    XCom payload:
-        snapshot_date:     ISO date
-        pipeline_run_id:   Airflow run_id
-        total_checks:      Number of checks run
-        passed:            Number of PASSED checks
-        failed:            Number of FAILED + WARNING checks
-        blocking_failures: Number of BLOCK severity failures
-    """
     from cip.quality.checks.match_bronze_dq import MatchBronzeDQChecker
 
     logger.info(
-        "task_run_dq starting",
+        "task_run_dq (incremental) starting",
         extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id},
     )
 
-    checker = MatchBronzeDQChecker.from_settings()
+    checker = MatchBronzeDQChecker.from_settings(archive_file=ARCHIVE_FILE)
     summary = checker.run_all(
         snapshot_date=snapshot_date,
         pipeline_run_id=pipeline_run_id,
+        dag_id=DAG_ID,
     )
 
-    payload = {
+    return {
         "snapshot_date": snapshot_date,
         "pipeline_run_id": pipeline_run_id,
         "total_checks": len(summary.checks),
@@ -267,8 +219,26 @@ def task_run_dq(
         "blocking_failures": len(summary.blocking_failures),
     }
 
-    logger.info("task_run_dq complete", extra=payload)
-    return payload
+
+# ===========================================================================
+# Task 5 — Build Silver (incremental, audit-driven scope)
+# ===========================================================================
+
+
+def task_build_silver(
+    snapshot_date: str,
+    pipeline_run_id: str,
+    force: bool = False,
+    **context,
+) -> dict:
+    from cip.ingestion.jobs.build_silver_match_data import task_build_silver as _build
+
+    return _build(
+        snapshot_date=snapshot_date,
+        pipeline_run_id=pipeline_run_id,
+        force=force,
+        **context,
+    )
 
 
 # ===========================================================================
@@ -277,29 +247,20 @@ def task_run_dq(
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Run Cricsheet archive ingestion pipeline tasks manually.")
-    p.add_argument(
-        "--snapshot-date",
-        default=_today(),
-        help="ISO date (YYYY-MM-DD). Defaults to today.",
-    )
+    p = argparse.ArgumentParser(description="Run the daily incremental Cricsheet pipeline tasks manually.")
+    p.add_argument("--snapshot-date", default=_today())
     p.add_argument(
         "--task",
-        choices=["download", "extract", "bronze", "dq", "all"],
+        choices=["download", "extract", "bronze", "dq", "silver", "all"],
         default="all",
-        help="Pipeline stage to run.",
     )
-    p.add_argument(
-        "--force",
-        action="store_true",
-        help="Bypass idempotency guard and re-run the task.",
-    )
+    p.add_argument("--force", action="store_true")
     return p.parse_args()
 
 
 def main() -> None:
-    import sys
     import logging as stdlib_logging
+    import sys
 
     stdlib_logging.basicConfig(
         level=stdlib_logging.INFO,
@@ -310,39 +271,18 @@ def main() -> None:
     args = _parse_args()
     snapshot_date = args.snapshot_date
     run_id = str(uuid.uuid4())
-
     ctx: dict = {}
 
     if args.task in ("download", "all"):
-        task_download_archive(
-            snapshot_date=snapshot_date,
-            pipeline_run_id=run_id,
-            force=args.force,
-            **ctx,
-        )
-
+        task_download_archive(snapshot_date=snapshot_date, pipeline_run_id=run_id, force=args.force, **ctx)
     if args.task in ("extract", "all"):
-        task_extract_archive(
-            snapshot_date=snapshot_date,
-            pipeline_run_id=run_id,
-            force=args.force,
-            **ctx,
-        )
-
+        task_extract_archive(snapshot_date=snapshot_date, pipeline_run_id=run_id, force=args.force, **ctx)
     if args.task in ("bronze", "all"):
-        task_load_bronze(
-            snapshot_date=snapshot_date,
-            pipeline_run_id=run_id,
-            force=args.force,
-            **ctx,
-        )
-
+        task_load_bronze(snapshot_date=snapshot_date, pipeline_run_id=run_id, force=args.force, **ctx)
     if args.task in ("dq", "all"):
-        task_run_dq(
-            snapshot_date=snapshot_date,
-            pipeline_run_id=run_id,
-            **ctx,
-        )
+        task_run_dq(snapshot_date=snapshot_date, pipeline_run_id=run_id, **ctx)
+    if args.task in ("silver", "all"):
+        task_build_silver(snapshot_date=snapshot_date, pipeline_run_id=run_id, force=args.force, **ctx)
 
 
 if __name__ == "__main__":

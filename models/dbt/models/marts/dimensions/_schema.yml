@@ -46,6 +46,19 @@ models:
         tests:
           - not_null
 
+  - name: player_display_names
+    description: "Maps every Cricsheet abbreviated player name to a full display name from the Register"
+    columns:
+      - name: cricsheet_name
+        description: "Abbreviated name as stored in fact_delivery.batter/bowler"
+        tests:
+          - not_null
+          - unique
+      - name: display_name
+        description: "Full name from dim_player when available; falls back to cricsheet_name"
+        tests:
+          - not_null
+
   - name: dim_match
     description: "One row per match — full match metadata"
     columns:

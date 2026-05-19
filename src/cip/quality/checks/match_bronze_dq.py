@@ -37,6 +37,9 @@ _TASK_ID = "run_dq"
 _ARCHIVE_FILE = "all_json.zip"
 _NULL_THRESHOLD_PCT = 1.0  # MAT-BRZ-004: warn if > 1% nulls in metadata cols
 
+DEFAULT_ARCHIVE_FILE = _ARCHIVE_FILE
+DEFAULT_DAG_ID = _DAG_ID
+
 
 class MatchBronzeDQChecker:
     """
@@ -47,18 +50,31 @@ class MatchBronzeDQChecker:
         summary = checker.run_all(snapshot_date="2026-05-01", pipeline_run_id="run-xyz")
     """
 
-    def __init__(self, reader: "PolarsIcebergReader", pg_dsn: str) -> None:
+    def __init__(
+        self,
+        reader: "PolarsIcebergReader",
+        pg_dsn: str,
+        archive_file: str = DEFAULT_ARCHIVE_FILE,
+    ) -> None:
         self._reader = reader
         self._pg_dsn = pg_dsn
+        self._archive_file = archive_file
 
     @classmethod
-    def from_settings(cls) -> "MatchBronzeDQChecker":
+    def from_settings(
+        cls,
+        archive_file: str = DEFAULT_ARCHIVE_FILE,
+    ) -> "MatchBronzeDQChecker":
         from cip.common.settings import get_settings
         from cip.transform.shared.readers import PolarsIcebergReader
 
         cfg = get_settings()
         pg_dsn = cfg.postgres.dsn.replace("postgresql+psycopg2://", "postgresql://")
-        return cls(reader=PolarsIcebergReader.from_settings(), pg_dsn=pg_dsn)
+        return cls(
+            reader=PolarsIcebergReader.from_settings(),
+            pg_dsn=pg_dsn,
+            archive_file=archive_file,
+        )
 
     def run_all(
         self,
@@ -70,7 +86,7 @@ class MatchBronzeDQChecker:
         Run all match Bronze DQ checks for the given snapshot_date.
 
         Reads Bronze Iceberg table, control.bronze_match_ingestion_log, and
-        the extraction manifest. Persists results to control.dq_results.
+        control.match_file_audit. Persists results to control.dq_results.
         Raises DQBlockingFailureError if any BLOCK check failed.
         """
         from cip.common.exceptions import TableNotFoundError
@@ -97,12 +113,11 @@ class MatchBronzeDQChecker:
             raise
 
         ingestion_log = self._get_ingestion_log(snapshot_date)
-        manifest = self._get_manifest(snapshot_date)
 
         results: list[DQCheckResult] = [
             self._check_files_failed(ingestion_log),
             self._check_unique_grain(bronze_df),
-            self._check_row_count_vs_manifest(bronze_df, manifest),
+            self._check_audit_coherence(ingestion_log, pipeline_run_id),
             self._check_metadata_coverage(bronze_df),
         ]
 
@@ -141,7 +156,7 @@ class MatchBronzeDQChecker:
                 check_id="MAT-BRZ-001",
                 check_name="bronze.match_data — files_failed == 0",
                 layer="BRONZE",
-                source_file=_ARCHIVE_FILE,
+                source_file=self._archive_file,
                 table_name=_BRONZE_TABLE,
                 status="SKIPPED",
                 severity="BLOCK",
@@ -155,7 +170,7 @@ class MatchBronzeDQChecker:
             check_id="MAT-BRZ-001",
             check_name="bronze.match_data — files_failed == 0",
             layer="BRONZE",
-            source_file=_ARCHIVE_FILE,
+            source_file=self._archive_file,
             table_name=_BRONZE_TABLE,
             status=status,
             severity="BLOCK",
@@ -175,7 +190,7 @@ class MatchBronzeDQChecker:
             check_id="MAT-BRZ-002",
             check_name="bronze.match_data — (match_id, revision) unique",
             layer="BRONZE",
-            source_file=_ARCHIVE_FILE,
+            source_file=self._archive_file,
             table_name=_BRONZE_TABLE,
             status=status,
             severity="BLOCK",
@@ -186,40 +201,65 @@ class MatchBronzeDQChecker:
             failure_pct=_pct(dup_count, total),
         )
 
-    def _check_row_count_vs_manifest(self, df: pl.DataFrame, manifest: dict | None) -> DQCheckResult:
-        """MAT-BRZ-003: Bronze row count must equal manifest file_count."""
-        bronze_rows = df.height
+    def _check_audit_coherence(self, ingestion_log: dict | None, pipeline_run_id: str) -> DQCheckResult:
+        """MAT-BRZ-003: per-run audit coherence.
 
-        if manifest is None:
+        For THIS pipeline_run_id, the count of audit rows newly stamped with
+        bronze_loaded_at must equal the count of Bronze rows written. Every
+        Bronze append should have a corresponding audit update.
+
+        Replaces the prior "Bronze rows == manifest file_count" check, which
+        no longer holds under audit-driven skip — Bronze rows < manifest
+        file_count whenever the daily incremental archive's 2-day overlap
+        causes byte-identical files to be skipped.
+        """
+        if ingestion_log is None:
             return DQCheckResult(
                 check_id="MAT-BRZ-003",
-                check_name="bronze.match_data — row count == manifest file_count",
+                check_name="bronze.match_data — audit coherence (this run)",
                 layer="BRONZE",
-                source_file=_ARCHIVE_FILE,
+                source_file=self._archive_file,
                 table_name=_BRONZE_TABLE,
                 status="SKIPPED",
                 severity="BLOCK",
-                expected_value="rows == manifest file_count",
-                actual_value="Manifest not found for this snapshot",
-                row_count_checked=bronze_rows,
+                expected_value="audit.bronze_loaded == bronze.rows_written for this run",
+                actual_value="No ingestion log found for this snapshot",
             )
 
-        expected = manifest.get("file_count", 0) or 0
-        loss = abs(bronze_rows - expected)
-        status = "PASSED" if bronze_rows == expected else "FAILED"
+        # If the ingestion log belongs to a prior run, Bronze was skipped this run
+        # (per-snapshot idempotency guard fired before any files were processed).
+        # Nothing was written, so nothing should appear in the audit — skip.
+        if ingestion_log.get("pipeline_run_id") != pipeline_run_id:
+            return DQCheckResult(
+                check_id="MAT-BRZ-003",
+                check_name="bronze.match_data — audit coherence (this run)",
+                layer="BRONZE",
+                source_file=self._archive_file,
+                table_name=_BRONZE_TABLE,
+                status="SKIPPED",
+                severity="BLOCK",
+                expected_value="audit.bronze_loaded == bronze.rows_written for this run",
+                actual_value="Bronze load was skipped this run (snapshot already loaded); no audit rows expected",
+            )
+
+        rows_written = ingestion_log.get("rows_written", 0) or 0
+        audit_marked = self._count_audit_bronze_loaded_for_run(pipeline_run_id)
+
+        status = "PASSED" if audit_marked == rows_written else "FAILED"
+        loss = abs(audit_marked - rows_written)
         return DQCheckResult(
             check_id="MAT-BRZ-003",
-            check_name="bronze.match_data — row count == manifest file_count",
+            check_name="bronze.match_data — audit coherence (this run)",
             layer="BRONZE",
-            source_file=_ARCHIVE_FILE,
+            source_file=self._archive_file,
             table_name=_BRONZE_TABLE,
             status=status,
             severity="BLOCK",
-            expected_value=f"{expected} rows (from manifest)",
-            actual_value=f"{bronze_rows} rows in Bronze",
-            row_count_checked=expected,
+            expected_value=f"{rows_written} audit rows marked bronze_loaded_at for this run",
+            actual_value=f"{audit_marked} audit rows marked",
+            row_count_checked=rows_written,
             failure_row_count=loss if status == "FAILED" else 0,
-            failure_pct=_pct(loss, expected) if status == "FAILED" and expected > 0 else 0.0,
+            failure_pct=_pct(loss, rows_written) if status == "FAILED" and rows_written > 0 else 0.0,
         )
 
     def _check_metadata_coverage(self, df: pl.DataFrame) -> DQCheckResult:
@@ -233,7 +273,7 @@ class MatchBronzeDQChecker:
                 check_id="MAT-BRZ-004",
                 check_name="bronze.match_data — metadata coverage (match_type/gender/team_a/team_b)",
                 layer="BRONZE",
-                source_file=_ARCHIVE_FILE,
+                source_file=self._archive_file,
                 table_name=_BRONZE_TABLE,
                 status="SKIPPED",
                 severity="WARN",
@@ -250,7 +290,7 @@ class MatchBronzeDQChecker:
             check_id="MAT-BRZ-004",
             check_name="bronze.match_data — metadata coverage (match_type/gender/team_a/team_b)",
             layer="BRONZE",
-            source_file=_ARCHIVE_FILE,
+            source_file=self._archive_file,
             table_name=_BRONZE_TABLE,
             status=status,
             severity="WARN",
@@ -273,12 +313,13 @@ class MatchBronzeDQChecker:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT files_attempted, files_succeeded, files_failed, rows_written
+                    SELECT files_attempted, files_succeeded, files_failed, rows_written,
+                           pipeline_run_id
                     FROM control.bronze_match_ingestion_log
                     WHERE archive_file = %s AND snapshot_date = %s AND status = 'SUCCESS'
                     ORDER BY id DESC LIMIT 1
                     """,
-                    (_ARCHIVE_FILE, snapshot_date),
+                    (self._archive_file, snapshot_date),
                 )
                 row = cur.fetchone()
 
@@ -289,29 +330,25 @@ class MatchBronzeDQChecker:
             "files_succeeded": row[1],
             "files_failed": row[2],
             "rows_written": row[3],
+            "pipeline_run_id": row[4],
         }
 
-    def _get_manifest(self, snapshot_date: str) -> dict | None:
-        """Return manifest as dict, or None if not found."""
-        try:
-            from cip.ingestion.match_data.manifest import manifest_object_key
-            from cip.ingestion.io.minio import MinIOClient
+    def _count_audit_bronze_loaded_for_run(self, pipeline_run_id: str) -> int:
+        """Count audit rows where bronze_loaded_at IS NOT NULL AND pipeline_run_id matches."""
+        import psycopg2
 
-            from cip.common.settings import get_settings
-
-            cfg = get_settings().storage
-            minio = MinIOClient.from_settings()
-            key = manifest_object_key(snapshot_date)
-            data = minio.read_bytes(cfg.bucket_source_files, key)
-            import json
-
-            return json.loads(data)
-        except Exception as exc:
-            logger.warning(
-                "Manifest not found — MAT-BRZ-003 will be SKIPPED",
-                extra={"snapshot_date": snapshot_date, "error": str(exc)},
-            )
-            return None
+        with psycopg2.connect(self._pg_dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM control.match_file_audit
+                    WHERE pipeline_run_id = %s
+                      AND bronze_loaded_at IS NOT NULL
+                    """,
+                    (pipeline_run_id,),
+                )
+                row = cur.fetchone()
+        return row[0] if row else 0
 
     def _persist_results(
         self,

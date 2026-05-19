@@ -1,3 +1,9 @@
+{{ config(
+    materialized='incremental',
+    unique_key=['match_id', 'player_name'],
+    on_schema_change='sync_all_columns'
+) }}
+
 -- Grain: one row per player per match (batting + bowling summary).
 with players as (
     select * from {{ ref('stg_silver_match_players') }}
@@ -66,3 +72,10 @@ from players p
 join match_context mc using (match_id)
 left join batting   b  using (match_id, person_id)
 left join bowling   bw using (match_id, person_id)
+
+{% if is_incremental() %}
+WHERE match_id IN (
+  SELECT match_id FROM control.match_file_audit
+  WHERE gold_loaded_at IS NULL
+)
+{% endif %}

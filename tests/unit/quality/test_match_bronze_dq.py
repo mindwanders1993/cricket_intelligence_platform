@@ -116,40 +116,47 @@ class TestCheckUniqueGrain:
 
 
 # ---------------------------------------------------------------------------
-# MAT-BRZ-003: row count == manifest file_count
+# MAT-BRZ-003: audit coherence (this run)
 # ---------------------------------------------------------------------------
 
 
-class TestCheckRowCountVsManifest:
-    def _check(self, df, manifest):
+class TestCheckAuditCoherence:
+    def _check_with_audit_count(self, ingestion_log, audit_count):
         checker = _make_checker()
-        return checker._check_row_count_vs_manifest(df, manifest)
+        checker._count_audit_bronze_loaded_for_run = MagicMock(return_value=audit_count)
+        return checker._check_audit_coherence(ingestion_log, pipeline_run_id=_RUN_ID)
 
-    def test_passes_when_counts_match(self):
-        df = _bronze_df([{"match_id": str(i)} for i in range(5)])
-        manifest = {"file_count": 5}
-        result = self._check(df, manifest)
+    def test_passes_when_audit_count_matches_rows_written(self):
+        log = {"files_attempted": 30, "files_succeeded": 30, "files_failed": 0, "rows_written": 5, "pipeline_run_id": _RUN_ID}
+        result = self._check_with_audit_count(log, audit_count=5)
         assert result.status == "PASSED"
         assert result.check_id == "MAT-BRZ-003"
-
-    def test_fails_when_counts_differ(self):
-        df = _bronze_df([{"match_id": str(i)} for i in range(3)])
-        manifest = {"file_count": 5}
-        result = self._check(df, manifest)
-        assert result.status == "FAILED"
-        assert result.failure_row_count == 2
         assert result.severity == "BLOCK"
 
-    def test_skipped_when_no_manifest(self):
-        df = _bronze_df([{"match_id": "x"}])
-        result = self._check(df, None)
+    def test_fails_when_audit_count_lags_rows_written(self):
+        log = {"files_attempted": 30, "files_succeeded": 30, "files_failed": 0, "rows_written": 10, "pipeline_run_id": _RUN_ID}
+        result = self._check_with_audit_count(log, audit_count=7)
+        assert result.status == "FAILED"
+        assert result.failure_row_count == 3
+        assert result.severity == "BLOCK"
+
+    def test_passes_when_both_zero_audit_skip_only(self):
+        # Daily DAG no-op day: every file already in Bronze, nothing written,
+        # no audit row newly marked.
+        log = {"files_attempted": 30, "files_succeeded": 0, "files_failed": 0, "rows_written": 0, "pipeline_run_id": _RUN_ID}
+        result = self._check_with_audit_count(log, audit_count=0)
+        assert result.status == "PASSED"
+
+    def test_skipped_when_bronze_skipped_this_run(self):
+        # Per-snapshot idempotency guard fired — Bronze wrote nothing for this run_id.
+        # The log row belongs to a prior run; MAT-BRZ-003 should SKIP, not FAIL.
+        log = {"files_attempted": 31, "files_succeeded": 31, "files_failed": 0, "rows_written": 31, "pipeline_run_id": "prior-run-id"}
+        result = self._check_with_audit_count(log, audit_count=0)
         assert result.status == "SKIPPED"
 
-    def test_passes_on_empty_table_with_zero_manifest(self):
-        df = pl.DataFrame({"match_id": pl.Series([], dtype=pl.Utf8)})
-        manifest = {"file_count": 0}
-        result = self._check(df, manifest)
-        assert result.status == "PASSED"
+    def test_skipped_when_no_ingestion_log(self):
+        result = self._check_with_audit_count(None, audit_count=0)
+        assert result.status == "SKIPPED"
 
 
 # ---------------------------------------------------------------------------
@@ -218,14 +225,14 @@ class TestCheckMetadataCoverage:
 
 
 class TestRunAll:
-    def _make_checker_with_mocks(self, bronze_df, ingestion_log=None, manifest=None):
+    def _make_checker_with_mocks(self, bronze_df, ingestion_log=None, audit_count=0):
         reader = MagicMock()
         reader.read_table.return_value = bronze_df
 
         checker = _make_checker(reader=reader)
 
         checker._get_ingestion_log = MagicMock(return_value=ingestion_log)
-        checker._get_manifest = MagicMock(return_value=manifest)
+        checker._count_audit_bronze_loaded_for_run = MagicMock(return_value=audit_count)
         checker._persist_results = MagicMock()
         return checker
 
@@ -244,10 +251,9 @@ class TestRunAll:
 
     def test_all_pass_returns_summary(self):
         df = self._good_df()
-        log = {"files_attempted": 3, "files_succeeded": 3, "files_failed": 0}
-        manifest = {"file_count": 3}
+        log = {"files_attempted": 3, "files_succeeded": 3, "files_failed": 0, "rows_written": 3, "pipeline_run_id": _RUN_ID}
 
-        checker = self._make_checker_with_mocks(df, ingestion_log=log, manifest=manifest)
+        checker = self._make_checker_with_mocks(df, ingestion_log=log, audit_count=3)
         summary = checker.run_all(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
 
         assert summary.passed_count == 4
@@ -257,10 +263,9 @@ class TestRunAll:
 
     def test_block_failure_raises(self):
         df = self._good_df()
-        log = {"files_attempted": 3, "files_succeeded": 2, "files_failed": 1}  # MAT-BRZ-001 fails
-        manifest = {"file_count": 3}
+        log = {"files_attempted": 3, "files_succeeded": 2, "files_failed": 1, "rows_written": 2, "pipeline_run_id": _RUN_ID}  # MAT-BRZ-001 fails
 
-        checker = self._make_checker_with_mocks(df, ingestion_log=log, manifest=manifest)
+        checker = self._make_checker_with_mocks(df, ingestion_log=log, audit_count=2)
 
         with pytest.raises(DQBlockingFailureError) as exc_info:
             checker.run_all(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
@@ -280,10 +285,9 @@ class TestRunAll:
                 "_snapshot_date": [_SNAPSHOT, _SNAPSHOT],
             }
         )
-        log = {"files_attempted": 2, "files_succeeded": 2, "files_failed": 0}
-        manifest = {"file_count": 2}
+        log = {"files_attempted": 2, "files_succeeded": 2, "files_failed": 0, "rows_written": 2, "pipeline_run_id": _RUN_ID}
 
-        checker = self._make_checker_with_mocks(df, ingestion_log=log, manifest=manifest)
+        checker = self._make_checker_with_mocks(df, ingestion_log=log, audit_count=2)
 
         with pytest.raises(DQBlockingFailureError):
             checker.run_all(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
@@ -292,10 +296,9 @@ class TestRunAll:
 
     def test_skipped_checks_not_counted_as_failures(self):
         df = self._good_df()
-        log = None  # triggers SKIPPED for MAT-BRZ-001
-        manifest = None  # triggers SKIPPED for MAT-BRZ-003
+        log = None  # triggers SKIPPED for MAT-BRZ-001 and MAT-BRZ-003
 
-        checker = self._make_checker_with_mocks(df, ingestion_log=log, manifest=manifest)
+        checker = self._make_checker_with_mocks(df, ingestion_log=log, audit_count=0)
         summary = checker.run_all(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
 
         statuses = {r.check_id: r.status for r in summary.checks}
@@ -305,10 +308,9 @@ class TestRunAll:
 
     def test_run_all_produces_four_results(self):
         df = self._good_df()
-        log = {"files_attempted": 3, "files_succeeded": 3, "files_failed": 0}
-        manifest = {"file_count": 3}
+        log = {"files_attempted": 3, "files_succeeded": 3, "files_failed": 0, "rows_written": 3, "pipeline_run_id": _RUN_ID}
 
-        checker = self._make_checker_with_mocks(df, ingestion_log=log, manifest=manifest)
+        checker = self._make_checker_with_mocks(df, ingestion_log=log, audit_count=3)
         summary = checker.run_all(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
 
         assert len(summary.checks) == 4

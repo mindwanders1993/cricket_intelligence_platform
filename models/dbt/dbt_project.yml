@@ -19,6 +19,10 @@ clean-targets:
 vars:
   snapshot_date: "{{ run_started_at.strftime('%Y-%m-%d') }}"
 
+seeds:
+  cricket:
+    +schema: gold
+
 models:
   cricket:
     staging:

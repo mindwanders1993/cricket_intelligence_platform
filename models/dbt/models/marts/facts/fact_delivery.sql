@@ -1,3 +1,9 @@
+{{ config(
+    materialized='incremental',
+    unique_key=['match_id', 'innings_number', 'over_number', 'delivery_number'],
+    on_schema_change='sync_all_columns'
+) }}
+
 -- Grain: one row per ball bowled.
 -- Resolves batter/bowler names to person_ids via match_players, and joins
 -- the wickets table on delivery key to expose dismissal_kind + player_out.
@@ -111,3 +117,10 @@ left join wickets  w   on d.match_id = w.match_id
                        and d.innings_number  = w.innings_number
                        and d.over_number     = w.over_number
                        and d.delivery_number = w.delivery_number
+
+{% if is_incremental() %}
+WHERE match_id IN (
+  SELECT match_id FROM control.match_file_audit
+  WHERE gold_loaded_at IS NULL
+)
+{% endif %}

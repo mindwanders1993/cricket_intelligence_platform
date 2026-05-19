@@ -550,15 +550,18 @@ This supports historical consistency, downstream enrichment, and AI-safe entity 
 
 | DAG | Trigger | Compute |
 |---|---|---|
-| `dag_ingest_cricsheet_register` | @weekly | Polars pods |
-| `dag_ingest_cricsheet_archives` | @weekly | Polars pods |
-| `dag_parse_bronze_match_documents` | after ingest | Polars pods |
-| `dag_build_silver_entities` | after bronze | PySpark on K8s |
-| `dag_run_gold_dbt_models` | after silver | dbt Core (DuckDB) |
-| `dag_run_quality_checks` | after each layer | Python pods |
-| `dag_refresh_serving_layer` | after gold | DuckDB pod |
-| `dag_train_ml_model` | @monthly | PySpark + MLflow pod |
-| `dag_refresh_ai_metadata` | after gold | Python pod |
+| `ingest_people_and_names_bronze` | @weekly (Sun 00:30 UTC) | Polars + PyIceberg |
+| `ingest_people_and_names_silver` | auto (bronze) / @weekly (Sun 01:30 UTC) | Polars + PyIceberg |
+| `ingest_all_match_data_bronze` | manual | Polars + PyIceberg |
+| `ingest_all_match_data_silver` | auto (bronze) / manual | PySpark + Iceberg |
+| `ingest_all_match_data_gold` | auto (silver) / manual | dbt Core (DuckDB) |
+| `ingest_two_day_match_data_bronze` | @daily (02:00 UTC) | Polars + PyIceberg |
+| `ingest_two_day_match_data_silver` | auto (bronze) / manual | PySpark + Iceberg |
+| `ingest_two_day_match_data_gold` | auto (silver) / manual | dbt Core (DuckDB) |
+| `dag_run_quality_checks` | after each layer | Python |
+| `dag_refresh_serving_layer` | after gold | DuckDB |
+| `dag_train_ml_model` | @monthly | PySpark + MLflow |
+| `dag_refresh_ai_metadata` | after gold | Python |
 
 ### 11.2 Control metadata (PostgreSQL `control` schema)
 
@@ -807,13 +810,13 @@ cricket-intelligence-platform/
 Docker Compose infrastructure, Kubernetes local cluster, `.env.example`, `pyproject.toml`, shared platform modules (`settings`, `exceptions`, `logging`, `enums`, `naming`, `minio`, `writers`, `readers`), bootstrap SQL, Makefile.
 
 ### Phase 2 — Registry pipeline (first vertical slice)
-`dag_ingest_cricsheet_register` — full 13-task pipeline: download → landing → schema drift detection → Bronze Iceberg (Polars) → Silver identity tables (Polars) → 31 DQ checks → control metadata. **This is the production-readiness baseline.**
+`ingest_people_and_names_bronze` + `ingest_people_and_names_silver` — download → landing → schema drift detection → Bronze Iceberg (Polars) → Silver identity tables (Polars) → DQ checks → control metadata. **This is the production-readiness baseline.**
 
 ### Phase 3 — Match ingestion and Silver explosion
-`dag_ingest_cricsheet_archives` + `dag_parse_bronze_match_documents` — 21k+ JSON files to Bronze (Polars). `dag_build_silver_entities` — PySpark-on-Kubernetes nested JSON explosion to Silver matches, innings, deliveries, wickets, officials, players.
+`ingest_all_match_data_bronze` / `ingest_two_day_match_data_bronze` — 21k+ JSON files to Bronze (Polars) with audit-skip and revision tracking. `ingest_all_match_data_silver` / `ingest_two_day_match_data_silver` — PySpark nested JSON explosion to Silver matches, innings, deliveries, wickets, officials, players.
 
 ### Phase 4 — Gold layer and BI
-`dag_run_gold_dbt_models` — dbt Core star schema materialization. DuckDB serving layer. Superset dashboards (executive + analyst personas).
+`ingest_all_match_data_gold` / `ingest_two_day_match_data_gold` — dbt Core star schema materialisation (full-refresh and incremental). DuckDB serving layer. Metabase dashboards (executive + analyst personas).
 
 ### Phase 5 — AI and MLOps
 FastAPI + LangChain + Ollama AI copilot. MLflow win-probability experiment. `dag_train_ml_model` + `dag_refresh_ai_metadata`.

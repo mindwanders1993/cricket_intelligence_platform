@@ -520,6 +520,103 @@ class SparkIcebergWriter:
         (df.writeTo(fqn).option("overwrite-mode", "dynamic").overwritePartitions())
         logger.info("Dynamic overwrite complete", extra={"table": fqn})
 
+    def delete_and_insert(
+        self,
+        df: "SparkDataFrame",
+        fqn: str,
+        snapshot_date: str,
+        key_cols: list[str],
+        pipeline_run_id: str | None = None,
+        source_file: str = "",
+        source_url: str = "",
+        partition_cols: list[str] | None = None,
+    ) -> None:
+        """
+        Atomically replace all rows for the key values present in df.
+
+        Issues:
+            DELETE FROM {fqn} WHERE (key_cols) IN (SELECT DISTINCT key_cols FROM <df>)
+            INSERT INTO {fqn} SELECT * FROM <df>
+
+        Uses Iceberg v2 row-level deletes — leaves Iceberg snapshot history
+        intact. The standard write mode for incremental Silver:
+        DELETE the rows of every match_id we're about to re-process, then
+        INSERT the fresh ones. Idempotent for repeated runs of the same
+        match_ids.
+
+        Requires the target table to be Iceberg format-version=2. New tables
+        created by this method default to v2; existing v1 tables are
+        upgraded via ALTER TABLE before the first DELETE.
+
+        Args:
+            df:              Spark DataFrame holding the new rows.
+            fqn:             Target Iceberg table FQN.
+            snapshot_date:   Logical date stamped into the meta columns.
+            key_cols:        Columns whose values trigger the DELETE scope.
+                             Use ["match_id"] for match-grained Silver tables.
+            pipeline_run_id: Optional run UUID.
+            source_file:     Source file name for metadata.
+            source_url:      Source URL for metadata.
+            partition_cols:  Partition columns for first-time table creation.
+                             Defaults to [_snapshot_date].
+        """
+        if not key_cols:
+            raise ValueError("delete_and_insert requires non-empty key_cols")
+
+        run_id = pipeline_run_id or str(uuid.uuid4())
+        df = _inject_meta_spark(df, snapshot_date, run_id, source_file, source_url)
+
+        if partition_cols is None:
+            partition_cols = [META.SNAPSHOT_DATE]
+
+        logger.info(
+            "Writing Iceberg table (Spark delete_and_insert)",
+            extra={"table": fqn, "snapshot_date": snapshot_date, "key_cols": key_cols},
+        )
+
+        self._ensure_table_exists(df, fqn, partition_cols)
+        self._ensure_format_v2(fqn)
+
+        # Temp view name unique per call so concurrent writers don't collide.
+        view_name = "delete_and_insert_src_" + uuid.uuid4().hex[:8]
+        df.createOrReplaceTempView(view_name)
+
+        try:
+            key_tuple = ", ".join(key_cols)
+            delete_sql = (
+                f"DELETE FROM {fqn} "
+                f"WHERE ({key_tuple}) IN "
+                f"(SELECT DISTINCT {key_tuple} FROM {view_name})"
+            )
+            insert_sql = f"INSERT INTO {fqn} SELECT * FROM {view_name}"
+
+            self._spark.sql(delete_sql)
+            self._spark.sql(insert_sql)
+        finally:
+            self._spark.catalog.dropTempView(view_name)
+
+        logger.info("delete_and_insert complete", extra={"table": fqn, "key_cols": key_cols})
+
+    def _ensure_format_v2(self, fqn: str) -> None:
+        """Ensure an Iceberg table is at format-version=2.
+
+        Row-level DELETE requires v2. New tables created by this writer
+        default to v2 (set in create flow); but tables created before this
+        method existed may be v1. ALTER is idempotent if already v2.
+        """
+        try:
+            self._spark.sql(
+                f"ALTER TABLE {fqn} SET TBLPROPERTIES ('format-version'='2')"
+            )
+        except Exception as exc:
+            # Don't hard-fail — some Iceberg builds reject the ALTER when
+            # already at v2. Log and move on; the DELETE will surface a real
+            # error if v1 is still in effect.
+            logger.warning(
+                "ALTER TABLE format-version=2 raised — continuing",
+                extra={"table": fqn, "error": str(exc)},
+            )
+
     def merge(
         self,
         df: "SparkDataFrame",

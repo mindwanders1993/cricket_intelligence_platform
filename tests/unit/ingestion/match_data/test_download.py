@@ -216,6 +216,101 @@ class TestMatchDataDownloaderSuccess:
         assert _call.kwargs["snapshot_date"] == _SNAPSHOT
 
 
+class TestMatchDataDownloaderArchiveOverride:
+    """Downloader respects custom archive_file / archive_url overrides — required
+    by the last-2-days incremental pipeline which reuses the same class."""
+
+    _CUSTOM_FILE = "recently_added_2_json.zip"
+    _CUSTOM_URL = "https://cricsheet.org/downloads/recently_added_2_json.zip"
+    _CUSTOM_MIN_BYTES = 50 * 1024  # 50 KB
+
+    def _make_custom_downloader(self, minio_mock):
+        from cip.ingestion.match_data.download import MatchDataDownloader
+
+        return MatchDataDownloader(
+            minio=minio_mock,
+            pg_dsn="postgresql://user:pass@host/db",
+            archive_file=self._CUSTOM_FILE,
+            archive_url=self._CUSTOM_URL,
+            min_expected_bytes=self._CUSTOM_MIN_BYTES,
+            dag_id="ingest_two_day_match_data_bronze",
+        )
+
+    def test_uses_custom_url_for_download(self, tmp_path):
+        """urllib.request.urlretrieve must be called with the custom URL."""
+        minio = MagicMock()
+        minio.upload_to_source_files.return_value = _fake_upload_result()
+        downloader = self._make_custom_downloader(minio)
+
+        zip_content = b"PK\x03\x04" + b"R" * (self._CUSTOM_MIN_BYTES + 100)
+        captured = {}
+
+        def _capture(url, dest):
+            captured["url"] = url
+            Path(dest).write_bytes(zip_content)
+
+        with (
+            patch.object(downloader, "_check_idempotency", return_value=None),
+            patch.object(downloader, "_insert_log_row", return_value=11),
+            patch.object(downloader, "_update_log_success") as mock_success,
+            patch("cip.ingestion.match_data.download.sha256_file", return_value="cafe"),
+            patch("urllib.request.urlretrieve", side_effect=_capture),
+        ):
+            mock_success.return_value = MagicMock(status="SUCCESS")
+            downloader.download(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
+
+        assert captured["url"] == self._CUSTOM_URL
+
+    def test_smaller_archive_passes_when_below_full_default_but_above_custom_min(self, tmp_path):
+        """A ~60 KB archive would fail the default 10 MB minimum but should pass
+        when min_expected_bytes is configured for the incremental pipeline."""
+        minio = MagicMock()
+        minio.upload_to_source_files.return_value = _fake_upload_result()
+        downloader = self._make_custom_downloader(minio)
+
+        zip_content = b"PK\x03\x04" + b"Q" * (60 * 1024)  # 60 KB — below default 10 MB
+
+        with (
+            patch.object(downloader, "_check_idempotency", return_value=None),
+            patch.object(downloader, "_insert_log_row", return_value=12),
+            patch.object(downloader, "_update_log_success") as mock_success,
+            patch("cip.ingestion.match_data.download.sha256_file", return_value="abcd"),
+            patch(
+                "urllib.request.urlretrieve",
+                side_effect=lambda url, dest: Path(dest).write_bytes(zip_content),
+            ),
+        ):
+            mock_success.return_value = MagicMock(status="SUCCESS")
+            result = downloader.download(snapshot_date=_SNAPSHOT, pipeline_run_id=_RUN_ID)
+
+        assert result.status == "SUCCESS"
+
+    def test_from_settings_threads_overrides_into_instance(self):
+        """The factory must accept overrides and forward them to the instance."""
+        from cip.ingestion.match_data.download import MatchDataDownloader
+
+        with (
+            patch("cip.ingestion.match_data.download.MinIOClient.from_settings") as mock_minio,
+            patch("cip.common.settings.get_settings") as mock_get,
+        ):
+            mock_minio.return_value = MagicMock()
+            mock_get.return_value = MagicMock(
+                postgres=MagicMock(dsn="postgresql+psycopg2://u:p@h/db")
+            )
+
+            downloader = MatchDataDownloader.from_settings(
+                archive_file=self._CUSTOM_FILE,
+                archive_url=self._CUSTOM_URL,
+                min_expected_bytes=self._CUSTOM_MIN_BYTES,
+                dag_id="ingest_two_day_match_data_bronze",
+            )
+
+        assert downloader._archive_file == self._CUSTOM_FILE
+        assert downloader._archive_url == self._CUSTOM_URL
+        assert downloader._min_expected_bytes == self._CUSTOM_MIN_BYTES
+        assert downloader._dag_id == "ingest_two_day_match_data_bronze"
+
+
 class TestMatchDataDownloaderFailures:
     """Error handling."""
 

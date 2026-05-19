@@ -79,10 +79,11 @@ class MatchesSilverTransform:
         )
 
         row_count = df.count()
-        self._writer.dynamic_overwrite(
+        self._writer.delete_and_insert(
             df=df,
             fqn=_SILVER_MATCHES,
             snapshot_date=snapshot_date,
+            key_cols=["match_id"],
             pipeline_run_id=pipeline_run_id,
             source_file="all_json.zip",
             partition_cols=["_snapshot_date", "match_type"],

@@ -93,80 +93,121 @@ class MatchSilverPipeline:
     def from_spark(cls, spark: "SparkSession") -> "MatchSilverPipeline":
         return cls(spark)
 
-    def run_all(self, snapshot_date: str, pipeline_run_id: str) -> MatchSilverResult:
+    def run_all(
+        self,
+        snapshot_date: str,
+        pipeline_run_id: str,
+        match_ids: list[str] | None = None,
+    ) -> MatchSilverResult:
         """
         Run every Match Silver transform in dependency order.
 
         Args:
             snapshot_date:   ISO date for the Silver write partition.
             pipeline_run_id: Airflow run_id or manual UUID.
+            match_ids:       Optional incremental scope. When provided, the
+                             Bronze read is filtered to these match_ids and
+                             every match-grained transform writes via
+                             DELETE+INSERT keyed on match_id. The dim-shaped
+                             transforms (teams/venues/competitions) still
+                             read all Bronze and use dynamic_overwrite —
+                             they aggregate across the full corpus and don't
+                             benefit from per-match filtering.
+                             When match_ids is an empty list, run_all
+                             short-circuits with a zero-row result.
 
         Returns:
             MatchSilverResult with row counts per target table.
         """
+        if match_ids is not None and len(match_ids) == 0:
+            logger.info(
+                "MatchSilverPipeline.run_all skipped — empty match_ids",
+                extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id},
+            )
+            return MatchSilverResult()
+
         logger.info(
             "MatchSilverPipeline.run_all starting",
-            extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id},
+            extra={
+                "snapshot_date": snapshot_date,
+                "pipeline_run_id": pipeline_run_id,
+                "match_id_scope": len(match_ids) if match_ids is not None else "all",
+            },
         )
 
-        bronze_df = read_bronze_matches(self._spark, snapshot_date)
+        # Two cached Bronze DFs for the incremental case:
+        #   bronze_full       — every match in scope of snapshot, used by
+        #                       teams/venues/competitions (dim aggregates).
+        #   bronze_match_df   — only the match_ids being re-processed; used
+        #                       by every match-grained transform (matches,
+        #                       innings, deliveries, wickets, etc.) which
+        #                       writes via delete_and_insert(match_id).
+        # When match_ids is None the two are the same DF (no double-read).
+        bronze_full = read_bronze_matches(self._spark, snapshot_date)
+        bronze_match_df = (
+            bronze_full
+            if match_ids is None
+            else read_bronze_matches(self._spark, snapshot_date, match_ids=match_ids)
+        )
 
         result = MatchSilverResult()
         try:
             result.matches_rows = MatchesSilverTransform(self._spark, self._writer).run(
-                bronze_df, snapshot_date, pipeline_run_id
+                bronze_match_df, snapshot_date, pipeline_run_id
             )
             result.tables_run.append("matches")
 
+            # Dim-shaped transforms — always read full Bronze
             result.teams_rows = TeamsSilverTransform(self._spark, self._writer).run(
-                bronze_df, snapshot_date, pipeline_run_id
+                bronze_full, snapshot_date, pipeline_run_id
             )
             result.tables_run.append("teams")
 
             result.venues_rows = VenuesSilverTransform(self._spark, self._writer).run(
-                bronze_df, snapshot_date, pipeline_run_id
+                bronze_full, snapshot_date, pipeline_run_id
             )
             result.tables_run.append("venues")
 
             result.competitions_rows = CompetitionsSilverTransform(self._spark, self._writer).run(
-                bronze_df, snapshot_date, pipeline_run_id
+                bronze_full, snapshot_date, pipeline_run_id
             )
             result.tables_run.append("competitions")
 
+            # Match-grained transforms — incremental-scoped
             result.innings_rows = InningsSilverTransform(self._spark, self._writer).run(
-                bronze_df, snapshot_date, pipeline_run_id
+                bronze_match_df, snapshot_date, pipeline_run_id
             )
             result.tables_run.append("innings")
 
             result.match_powerplays_rows = MatchPowerplaysSilverTransform(self._spark, self._writer).run(
-                bronze_df, snapshot_date, pipeline_run_id
+                bronze_match_df, snapshot_date, pipeline_run_id
             )
             result.tables_run.append("match_powerplays")
 
             result.deliveries_rows = DeliveriesSilverTransform(self._spark, self._writer).run(
-                bronze_df, snapshot_date, pipeline_run_id
+                bronze_match_df, snapshot_date, pipeline_run_id
             )
             result.tables_run.append("deliveries")
 
             result.wickets_rows = WicketsSilverTransform(self._spark, self._writer).run(
-                bronze_df, snapshot_date, pipeline_run_id
+                bronze_match_df, snapshot_date, pipeline_run_id
             )
             result.tables_run.append("wickets")
 
             # match_registry must land before players/officials so Path A can join it.
             result.match_registry_rows = MatchRegistrySilverTransform(self._spark, self._writer).run(
-                bronze_df, snapshot_date, pipeline_run_id
+                bronze_match_df, snapshot_date, pipeline_run_id
             )
             result.tables_run.append("match_registry")
 
             players_result = MatchPlayersSilverTransform(self._spark, self._writer).run(
-                bronze_df, snapshot_date, pipeline_run_id
+                bronze_match_df, snapshot_date, pipeline_run_id
             )
             result.match_players_rows = players_result.row_count
             result.tables_run.append("match_players")
 
             officials_result = MatchOfficialsSilverTransform(self._spark, self._writer).run(
-                bronze_df, snapshot_date, pipeline_run_id
+                bronze_match_df, snapshot_date, pipeline_run_id
             )
             result.match_officials_rows = officials_result.row_count
             result.tables_run.append("match_officials")
@@ -177,7 +218,9 @@ class MatchSilverPipeline:
             )
             result.tables_run.append("unmatched_persons_audit")
         finally:
-            bronze_df.unpersist()
+            bronze_full.unpersist()
+            if bronze_match_df is not bronze_full:
+                bronze_match_df.unpersist()
 
         logger.info(
             "MatchSilverPipeline.run_all complete",

@@ -36,7 +36,7 @@ _SILVER_PERSONS = TableName.silver("persons")
 _SILVER_PERSON_IDENTIFIERS = TableName.silver("person_identifiers")
 _SILVER_NAME_VARIATIONS = TableName.silver("name_variations")
 
-_DAG_ID = "dag_ingest_people_and_names"
+_DAG_ID = "ingest_people_and_names_bronze"
 _TASK_ID = "run_dq"
 _ROW_COUNT_THRESHOLD = 0.99  # Bronze rows must be >= 99% of landing rows
 

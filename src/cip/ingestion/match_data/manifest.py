@@ -4,7 +4,11 @@
 #
 # After MatchDataExtractor uploads all JSON files for a snapshot, it writes
 # a _manifest.json object at:
-#   match_data/json/snapshot_date={date}/_manifest.json
+#   match_data/json/snapshot_date={date}/archive={stem}/_manifest.json
+#
+# The `archive={stem}` segment scopes the manifest to a single archive so the
+# monthly full-backfill and the daily incremental never overwrite each
+# other when they share a snapshot_date.
 #
 # MatchBronzeLoader and MAT-BRZ-003 DQ check read the manifest to verify
 # that the number of Bronze rows matches the number of extracted files.
@@ -55,15 +59,23 @@ class ExtractionManifest:
         )
 
 
-def manifest_object_key(snapshot_date: str) -> str:
-    return f"match_data/json/snapshot_date={snapshot_date}/_manifest.json"
+def manifest_object_key(snapshot_date: str, archive_file: str = "all_json.zip") -> str:
+    """Per-archive manifest key.
+
+    Defaults to ``all_json.zip`` for backward compatibility with callers that
+    pre-date the per-archive partitioning. Pass the actual ``archive_file``
+    when reading/writing manifests from other pipelines (e.g. the daily
+    incremental).
+    """
+    archive_stem = archive_file.removesuffix(".zip")
+    return f"match_data/json/snapshot_date={snapshot_date}/archive={archive_stem}/_manifest.json"
 
 
 def write_manifest(minio: "MinIOClient", manifest: ExtractionManifest) -> None:
     from cip.common.settings import get_settings
 
     cfg = get_settings().storage
-    key = manifest_object_key(manifest.snapshot_date)
+    key = manifest_object_key(manifest.snapshot_date, manifest.archive_file)
     minio.upload_bytes(
         data=manifest.to_json().encode("utf-8"),
         bucket=cfg.bucket_source_files,
@@ -72,10 +84,14 @@ def write_manifest(minio: "MinIOClient", manifest: ExtractionManifest) -> None:
     )
 
 
-def read_manifest(minio: "MinIOClient", snapshot_date: str) -> ExtractionManifest:
+def read_manifest(
+    minio: "MinIOClient",
+    snapshot_date: str,
+    archive_file: str = "all_json.zip",
+) -> ExtractionManifest:
     from cip.common.settings import get_settings
 
     cfg = get_settings().storage
-    key = manifest_object_key(snapshot_date)
+    key = manifest_object_key(snapshot_date, archive_file)
     data = minio.read_bytes(cfg.bucket_source_files, key)
     return ExtractionManifest.from_json(data)

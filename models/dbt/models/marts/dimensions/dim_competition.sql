@@ -1,5 +1,19 @@
+{{ config(
+    materialized='incremental',
+    unique_key='competition_name',
+    on_schema_change='sync_all_columns'
+) }}
+
+-- depends_on: {{ ref('stg_silver_matches') }}
+
 with competitions as (
     select * from {{ ref('stg_silver_competitions') }}
+    {% if is_incremental() %}
+    where competition_name in (
+        select distinct event_name from {{ ref('stg_silver_matches') }}
+        where match_id in (select match_id from control.match_file_audit where gold_loaded_at is null)
+    )
+    {% endif %}
 ),
 
 deduped as (

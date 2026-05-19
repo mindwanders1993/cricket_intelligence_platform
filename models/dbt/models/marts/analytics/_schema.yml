@@ -1,3 +1,11 @@
+# TODO: per-mart incrementalisation
+# Aggregate/mart models in this directory remain materialized='table'.
+# They aggregate across the full corpus, so naive incremental filtering
+# would drop seasons/players that span pending and already-loaded matches.
+# Revisit per-mart: mart_player_batting, mart_player_bowling,
+# mart_team_performance, mart_venue_dna, mart_phase_scoring,
+# mart_toss_outcome, mart_matchup_analysis.
+
 version: 2
 
 models:

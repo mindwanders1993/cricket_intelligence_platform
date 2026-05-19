@@ -110,27 +110,85 @@ def task_build_silver(
     **context,
 ) -> dict:
     """
-    Run MatchSilverPipeline.run_all() for the given snapshot.
+    Run MatchSilverPipeline.run_all() for the given snapshot, scoped to the
+    match_ids that have new Bronze content (per control.match_file_audit).
 
-    `force` is reserved for parity with the rest of the platform — Silver
-    writes use dynamic_overwrite, which is already idempotent per partition.
+    Flow:
+      1. Query MatchFileAudit.pending_silver_match_ids().
+      2. If empty: skip the pipeline entirely; mark the run as a no-op.
+      3. Otherwise: run MatchSilverPipeline.run_all(match_ids=...)
+         — match-grained transforms delete+insert by match_id,
+         — dim-shaped transforms always read full Bronze.
+      4. Stamp silver_loaded_at = NOW() on the processed match_ids.
+
+    `force=True` bypasses the pending-list query and re-runs the entire
+    pipeline on all match_ids in Bronze (full rebuild). Use only when
+    rebuilding Silver from scratch — daily incremental DAG runs should
+    leave force=False.
     """
+    from datetime import datetime, timezone
+
+    from cip.ingestion.audit.match_file_audit import MatchFileAudit
     from cip.transform.spark.session import get_or_create_spark
     from cip.transform.spark.silver.pipeline import MatchSilverPipeline
 
     force = _coerce_bool(force)
 
+    audit = MatchFileAudit.from_settings()
+    if force:
+        match_ids: list[str] | None = None  # full rebuild
+    else:
+        match_ids = audit.pending_silver_match_ids()
+        if not match_ids:
+            logger.info(
+                "task_build_silver — no pending match_ids; skipping pipeline",
+                extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id},
+            )
+            return {
+                "snapshot_date": snapshot_date,
+                "pipeline_run_id": pipeline_run_id,
+                "tables_run": [],
+                "row_counts": {},
+                "total_rows": 0,
+                "match_ids_scope": 0,
+            }
+
     logger.info(
         "task_build_silver starting",
-        extra={"snapshot_date": snapshot_date, "pipeline_run_id": pipeline_run_id, "force": force},
+        extra={
+            "snapshot_date": snapshot_date,
+            "pipeline_run_id": pipeline_run_id,
+            "force": force,
+            "match_ids_scope": "all" if match_ids is None else len(match_ids),
+        },
     )
 
     spark = get_or_create_spark(app_name_suffix="silver-match-build")
     try:
         pipeline = MatchSilverPipeline.from_spark(spark)
-        result = pipeline.run_all(snapshot_date=snapshot_date, pipeline_run_id=pipeline_run_id)
+        result = pipeline.run_all(
+            snapshot_date=snapshot_date,
+            pipeline_run_id=pipeline_run_id,
+            match_ids=match_ids,
+        )
     finally:
         spark.stop()
+
+    # Stamp silver_loaded_at after successful pipeline write. For full
+    # rebuilds (force=True / match_ids=None) we need to enumerate every
+    # match_id that was processed — read it back from the audit table's
+    # bronze-loaded set, since that's what the pipeline read.
+    if match_ids is None:
+        # Full rebuild: every audit row with bronze_loaded_at gets stamped.
+        # We do this in one UPDATE rather than enumerating.
+        stamp_ids = audit.pending_silver_match_ids()
+        # plus any already-silver-loaded that we just re-overwrote — but the
+        # mark_silver_loaded guard skips already-stamped rows, so it's safe
+        # to pass an over-broad list.
+    else:
+        stamp_ids = match_ids
+    if stamp_ids:
+        audit.mark_silver_loaded(stamp_ids, ts=datetime.now(timezone.utc))
 
     return {
         "snapshot_date": snapshot_date,
@@ -151,6 +209,7 @@ def task_build_silver(
             "unmatched_persons_audit": result.unmatched_persons_audit_rows,
         },
         "total_rows": result.total_rows,
+        "match_ids_scope": "all" if match_ids is None else len(match_ids),
     }
 
 

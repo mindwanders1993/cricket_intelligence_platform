@@ -225,6 +225,19 @@ class PathBuilder:
         return f"s3://{cls.SOURCE_FILES_BUCKET}/match_data/json/{cls._partition(snapshot_date)}/{file_name}"
 
     @classmethod
+    def archive_processed(cls, processed_date: str | date, file_name: str) -> str:
+        """Canonical post-Bronze archive location for a processed JSON file.
+
+        Match-data Bronze loader copies each successfully-loaded JSON here so
+        the audit log's archive_path points to a stable, retention-controlled
+        location separate from the time-varying landing prefix.
+        """
+        return (
+            f"s3://{cls.SOURCE_FILES_BUCKET}/match_data/archive/"
+            f"processed_date={_validate_date(processed_date)}/{file_name}"
+        )
+
+    @classmethod
     def source_people_and_names_csv(cls, file_name: str, snapshot_date: str | date) -> str:
         return f"s3://{cls.SOURCE_FILES_BUCKET}/people_and_names/csv/{cls._partition(snapshot_date)}/{file_name}"
 
@@ -338,12 +351,22 @@ class DagNames:
     Used in pipeline_watermark seeds and cross-DAG trigger logic.
     """
 
-    INGEST_MATCH_DATA: str = "dag_ingest_match_data"
-    INGEST_PEOPLE_AND_NAMES: str = "dag_ingest_people_and_names"
-    BUILD_SILVER_MATCH_DATA: str = "dag_build_silver_match_data"
-    BUILD_SILVER_PEOPLE_AND_NAMES: str = "dag_build_silver_people_and_names"
+    # People & Names — bronze ingestion and silver promotion run separately.
+    INGEST_PEOPLE_AND_NAMES_BRONZE: str = "ingest_people_and_names_bronze"
+    INGEST_PEOPLE_AND_NAMES_SILVER: str = "ingest_people_and_names_silver"
+
+    # Full-load match data — bronze and silver run separately; bronze auto-triggers silver.
+    INGEST_ALL_MATCH_DATA_BRONZE: str = "ingest_all_match_data_bronze"
+    INGEST_ALL_MATCH_DATA_SILVER: str = "ingest_all_match_data_silver"
+    INGEST_ALL_MATCH_DATA_GOLD: str = "ingest_all_match_data_gold"
+
+    # Incremental (2-day) match data — bronze auto-triggers silver; gold is manual.
+    INGEST_TWO_DAY_MATCH_DATA_BRONZE: str = "ingest_two_day_match_data_bronze"
+    INGEST_TWO_DAY_MATCH_DATA_SILVER: str = "ingest_two_day_match_data_silver"
+    INGEST_TWO_DAY_MATCH_DATA_GOLD: str = "ingest_two_day_match_data_gold"
+
+    # Future / placeholder pipelines (not yet implemented).
     PARSE_BRONZE_MATCH_DATA: str = "dag_parse_bronze_match_data"
-    RUN_GOLD_DBT: str = "dag_run_gold_dbt_models"
     RUN_QUALITY: str = "dag_run_quality_checks"
     REFRESH_SERVING: str = "dag_refresh_serving_layer"
     TRAIN_ML: str = "dag_train_ml_model"
@@ -352,12 +375,15 @@ class DagNames:
     @classmethod
     def all(cls) -> list[str]:
         return [
-            cls.INGEST_MATCH_DATA,
-            cls.INGEST_PEOPLE_AND_NAMES,
-            cls.BUILD_SILVER_MATCH_DATA,
-            cls.BUILD_SILVER_PEOPLE_AND_NAMES,
+            cls.INGEST_PEOPLE_AND_NAMES_BRONZE,
+            cls.INGEST_PEOPLE_AND_NAMES_SILVER,
+            cls.INGEST_ALL_MATCH_DATA_BRONZE,
+            cls.INGEST_ALL_MATCH_DATA_SILVER,
+            cls.INGEST_ALL_MATCH_DATA_GOLD,
+            cls.INGEST_TWO_DAY_MATCH_DATA_BRONZE,
+            cls.INGEST_TWO_DAY_MATCH_DATA_SILVER,
+            cls.INGEST_TWO_DAY_MATCH_DATA_GOLD,
             cls.PARSE_BRONZE_MATCH_DATA,
-            cls.RUN_GOLD_DBT,
             cls.RUN_QUALITY,
             cls.REFRESH_SERVING,
             cls.TRAIN_ML,

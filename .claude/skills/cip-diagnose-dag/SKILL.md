@@ -18,12 +18,15 @@ Pulls together everything needed to understand a single failed Airflow run witho
 ```
 
 DAG names (from `orchestration/airflow/dags/`):
-- `dag_ingest_people_and_names`
-- `dag_ingest_match_data`
-- `dag_parse_bronze_match_data`
-- `dag_build_silver_people_and_names`
-- `dag_build_silver_match_data`
-- `dag_run_gold_dbt_models`
+- `ingest_people_and_names_bronze`
+- `ingest_people_and_names_silver`
+- `ingest_all_match_data_bronze`
+- `ingest_all_match_data_silver`
+- `ingest_all_match_data_gold`
+- `ingest_two_day_match_data_bronze`
+- `ingest_two_day_match_data_silver`
+- `ingest_two_day_match_data_gold`
+- `dag_parse_bronze_match_data` (placeholder — not yet implemented)
 
 ## What You Must Do When Invoked
 
@@ -41,7 +44,7 @@ If invoked with `--help` or `-h`, print Usage and stop.
       | python3 -c "import json,sys; runs=json.load(sys.stdin); print(runs[0]['run_id']) if runs else print('NONE')"
   ```
   If `NONE`, tell the user there are no failed runs for that DAG.
-- **RUN_ID only** → ask via `AskUserQuestion` which DAG it belongs to (6 known DAGs listed above). No CLI lookup is possible without the DAG name.
+- **RUN_ID only** → ask via `AskUserQuestion` which DAG it belongs to (8 active DAGs listed above). No CLI lookup is possible without the DAG name.
 - **Neither** → `AskUserQuestion` for the DAG name.
 
 ### Step 2 — Fetch task logs
@@ -71,9 +74,10 @@ Pipelines write audit rows to `control.*_ingestion_log`. Pick the right table:
 
 | DAG | Control table |
 |---|---|
-| `dag_ingest_people_and_names`, `dag_build_silver_people_and_names` | `control.register_ingestion_log` |
-| `dag_ingest_match_data`, `dag_parse_bronze_match_data`, `dag_build_silver_match_data` | `control.bronze_match_ingestion_log` |
-| `dag_run_gold_dbt_models` | (no dedicated table — relies on dbt artifacts) |
+| `ingest_people_and_names_bronze`, `ingest_people_and_names_silver` | `control.register_ingestion_log` |
+| `ingest_all_match_data_bronze`, `ingest_two_day_match_data_bronze` | `control.archive_download_log` |
+| `ingest_all_match_data_silver`, `ingest_two_day_match_data_silver` | `control.match_file_audit` |
+| `ingest_all_match_data_gold`, `ingest_two_day_match_data_gold` | (no dedicated table — relies on dbt artifacts + `control.match_file_audit.gold_loaded_at`) |
 
 ```bash
 docker exec compose-postgres-1 \

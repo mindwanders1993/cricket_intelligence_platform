@@ -18,22 +18,27 @@ import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cip.common.logging import get_logger
+from cip.ingestion.audit.match_file_audit import AuditRow, MatchFileAudit
+from cip.ingestion.io.minio import MinIOClient
 from cip.ingestion.match_data.checksum import sha256_bytes
 from cip.ingestion.match_data.manifest import (
     ExtractionManifest,
     ManifestEntry,
     write_manifest,
 )
-from cip.ingestion.io.minio import MinIOClient
 
 logger = get_logger(__name__)
 
 _ARCHIVE_FILE = "all_json.zip"
 _DAG_ID = "dag_ingest_match_data"
 _MAX_WORKERS = 20
+
+DEFAULT_ARCHIVE_FILE = _ARCHIVE_FILE
+DEFAULT_LOADED_BY_PIPELINE = "full"
 
 
 @dataclass(frozen=True)
@@ -55,17 +60,43 @@ class MatchDataExtractor:
     and file count.
     """
 
-    def __init__(self, minio: MinIOClient, pg_dsn: str) -> None:
+    def __init__(
+        self,
+        minio: MinIOClient,
+        pg_dsn: str,
+        archive_file: str = DEFAULT_ARCHIVE_FILE,
+        loaded_by_pipeline: str = DEFAULT_LOADED_BY_PIPELINE,
+        audit: MatchFileAudit | None = None,
+    ) -> None:
         self._minio = minio
         self._pg_dsn = pg_dsn
+        self._archive_file = archive_file
+        # Stem of the archive (e.g. "all_json", "recently_added_2_json") used to
+        # partition the MinIO JSON prefix so the full-backfill and incremental
+        # pipelines never share files even when they share a snapshot_date.
+        self._archive_stem = archive_file.removesuffix(".zip")
+        self._loaded_by_pipeline = loaded_by_pipeline
+        # Audit log handle — stamps landing_loaded_at + landing_path per file
+        # right after the JSONs land in MinIO. Bronze loader later updates the
+        # same rows with bronze_loaded_at and archive_path.
+        self._audit = audit or MatchFileAudit(pg_dsn)
 
     @classmethod
-    def from_settings(cls) -> "MatchDataExtractor":
+    def from_settings(
+        cls,
+        archive_file: str = DEFAULT_ARCHIVE_FILE,
+        loaded_by_pipeline: str = DEFAULT_LOADED_BY_PIPELINE,
+    ) -> "MatchDataExtractor":
         from cip.common.settings import get_settings
 
         cfg = get_settings()
         pg_dsn = cfg.postgres.dsn.replace("postgresql+psycopg2://", "postgresql://")
-        return cls(minio=MinIOClient.from_settings(), pg_dsn=pg_dsn)
+        return cls(
+            minio=MinIOClient.from_settings(),
+            pg_dsn=pg_dsn,
+            archive_file=archive_file,
+            loaded_by_pipeline=loaded_by_pipeline,
+        )
 
     def extract(
         self,
@@ -94,7 +125,7 @@ class MatchDataExtractor:
                 manifest = self._read_existing_manifest(snapshot_date)
                 return ExtractionResult(
                     snapshot_date=snapshot_date,
-                    archive_file=_ARCHIVE_FILE,
+                    archive_file=self._archive_file,
                     file_count=manifest.file_count,
                     extracted_prefix=existing,
                     manifest=manifest,
@@ -103,8 +134,11 @@ class MatchDataExtractor:
         log_id = self._get_log_id(snapshot_date)
         cfg_storage = self._get_storage_cfg()
         source_files_bucket = cfg_storage.bucket_source_files
-        zip_key = f"match_data/zip/snapshot_date={snapshot_date}/{_ARCHIVE_FILE}"
-        extracted_prefix = f"s3://{source_files_bucket}/match_data/json/snapshot_date={snapshot_date}/"
+        zip_key = f"match_data/zip/snapshot_date={snapshot_date}/{self._archive_file}"
+        extracted_prefix = (
+            f"s3://{source_files_bucket}/match_data/json/"
+            f"snapshot_date={snapshot_date}/archive={self._archive_stem}/"
+        )
 
         started = time.monotonic()
         logger.info(
@@ -117,7 +151,7 @@ class MatchDataExtractor:
         )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            local_zip = Path(tmp_dir) / _ARCHIVE_FILE
+            local_zip = Path(tmp_dir) / self._archive_file
             self._minio.download_file(source_files_bucket, zip_key, local_zip)
 
             entries, failed = self._extract_and_upload(
@@ -134,7 +168,7 @@ class MatchDataExtractor:
 
         manifest = ExtractionManifest(
             snapshot_date=snapshot_date,
-            archive_file=_ARCHIVE_FILE,
+            archive_file=self._archive_file,
             file_count=len(entries),
             entries=entries,
         )
@@ -142,6 +176,16 @@ class MatchDataExtractor:
 
         if log_id is not None:
             self._update_log_extracted(log_id, extracted_prefix, len(entries))
+
+        # Stamp landing_loaded_at + landing_path in the file-level audit log.
+        # ON CONFLICT DO NOTHING — re-runs and overlap with prior extracts
+        # both collapse to a single row per (file_name, content_hash).
+        self._insert_audit_landing_rows(
+            entries=entries,
+            extracted_prefix=extracted_prefix,
+            archive_download_id=log_id,
+            pipeline_run_id=pipeline_run_id,
+        )
 
         duration = round(time.monotonic() - started, 3)
         logger.info(
@@ -156,7 +200,7 @@ class MatchDataExtractor:
 
         return ExtractionResult(
             snapshot_date=snapshot_date,
-            archive_file=_ARCHIVE_FILE,
+            archive_file=self._archive_file,
             file_count=len(entries),
             extracted_prefix=extracted_prefix,
             manifest=manifest,
@@ -185,7 +229,10 @@ class MatchDataExtractor:
         failed: list[str] = []
 
         def _upload_one(file_name: str, content: bytes) -> ManifestEntry | None:
-            key = f"match_data/json/snapshot_date={snapshot_date}/{Path(file_name).name}"
+            key = (
+                f"match_data/json/snapshot_date={snapshot_date}/"
+                f"archive={self._archive_stem}/{Path(file_name).name}"
+            )
             try:
                 self._minio.upload_bytes(
                     data=content,
@@ -243,7 +290,7 @@ class MatchDataExtractor:
                     ORDER BY id DESC
                     LIMIT 1
                     """,
-                    (_ARCHIVE_FILE, snapshot_date),
+                    (self._archive_file, snapshot_date),
                 )
                 row = cur.fetchone()
         return row[0] if row else None
@@ -260,7 +307,7 @@ class MatchDataExtractor:
                     WHERE archive_file = %s AND snapshot_date = %s
                     ORDER BY id DESC LIMIT 1
                     """,
-                    (_ARCHIVE_FILE, snapshot_date),
+                    (self._archive_file, snapshot_date),
                 )
                 row = cur.fetchone()
         return row[0] if row else None
@@ -285,4 +332,43 @@ class MatchDataExtractor:
     def _read_existing_manifest(self, snapshot_date: str) -> ExtractionManifest:
         from cip.ingestion.match_data.manifest import read_manifest
 
-        return read_manifest(self._minio, snapshot_date)
+        return read_manifest(self._minio, snapshot_date, self._archive_file)
+
+    # -------------------------------------------------------------------------
+    # Audit log integration
+    # -------------------------------------------------------------------------
+
+    def _insert_audit_landing_rows(
+        self,
+        entries: list[ManifestEntry],
+        extracted_prefix: str,
+        archive_download_id: int | None,
+        pipeline_run_id: str,
+    ) -> None:
+        if not entries:
+            return
+
+        now = datetime.now(timezone.utc)
+        rows: list[AuditRow] = []
+        for entry in entries:
+            match_id = entry.file_name.removesuffix(".json")
+            landing_path = f"{extracted_prefix}{entry.file_name}"
+            rows.append(
+                AuditRow(
+                    file_name=entry.file_name,
+                    content_hash=entry.checksum_sha256,
+                    match_id=match_id,
+                    archive_file=self._archive_file,
+                    archive_download_id=archive_download_id,
+                    landing_path=landing_path,
+                    loaded_by_pipeline=self._loaded_by_pipeline,
+                    pipeline_run_id=pipeline_run_id,
+                    landing_loaded_at=now,
+                )
+            )
+
+        inserted = self._audit.insert_landing(rows)
+        logger.info(
+            "Audit landing rows inserted",
+            extra={"requested": len(rows), "inserted": inserted},
+        )

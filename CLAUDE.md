@@ -92,6 +92,10 @@ poetry run python -m cip.ingestion.jobs.ingest_people_and_names --snapshot-date 
 poetry run python -m cip.ingestion.jobs.build_silver_people_and_names --task all
 poetry run python -m cip.ingestion.jobs.build_silver_people_and_names --snapshot-date 2026-05-11 --task silver
 poetry run python -m cip.ingestion.jobs.build_silver_people_and_names --snapshot-date 2026-05-11 --task dq
+# Match data — full backfill (monthly): all_json.zip → Bronze
+ICEBERG_REST_URI=http://localhost:8181 MINIO_S3_ENDPOINT=http://localhost:9000 POSTGRES_HOST=localhost poetry run python -m cip.ingestion.jobs.full_load_match_data --task all
+# Match data — daily incremental: recently_added_2_json.zip → Bronze (same target table)
+ICEBERG_REST_URI=http://localhost:8181 MINIO_S3_ENDPOINT=http://localhost:9000 POSTGRES_HOST=localhost poetry run python -m cip.ingestion.jobs.incremental_match_data --task all
 # Match data — All match data Silver build
 ICEBERG_REST_URI=http://localhost:8181 MINIO_S3_ENDPOINT=http://localhost:9000 POSTGRES_HOST=localhost SPARK_DRIVER_MEMORY=8g SPARK_MASTER=local[2] poetry run python -m cip.ingestion.jobs.build_silver_match_data --snapshot-date 2026-05-01 --task all
 
@@ -102,7 +106,7 @@ cd models/dbt && poetry run dbt test                           # dbt tests (40 t
 
 # DuckDB serving UI (browser at http://localhost:4213)
 make duckdb-ui     # opens the DuckDB built-in web UI on storage/duckdb/cricket.duckdb
-make duckdb-stop   # release the file lock BEFORE running dag_run_gold_dbt_models
+make duckdb-stop   # release the file lock BEFORE running ingest_all_match_data_gold / ingest_two_day_match_data_gold
 
 # Metabase — BI dashboards
 python scripts/provision_metabase_dashboards.py  # (re)provision Cricket dashboards + filters via Metabase API
@@ -226,6 +230,44 @@ New table names must be added to `TableName.BRONZE_TABLES` / `SILVER_TABLES` / `
 
 Every pipeline task guards against re-runs via `control.register_ingestion_log` (register pipeline) or `control.bronze_ingestion_log` (match pipeline). Pass `force=True` / `--force` to bypass. DAG conf `{"force": true}` propagates via Jinja to all tasks.
 
+### Match ingestion pipelines (full backfill vs daily incremental)
+
+Two DAGs land into the **same** `bronze.match_data` table. The medallion design uses append-only Bronze + revision tracking; "upsert" semantics emerge at the Silver layer via `MAX(revision) per match_id` dedup. There is no `MERGE INTO` anywhere — do not add one.
+
+| Aspect | `ingest_all_match_data_bronze` (monthly) | `ingest_two_day_match_data_bronze` (daily) |
+|---|---|---|
+| Source archive | `all_json.zip` (~21k matches) | `recently_added_2_json.zip` (~30 matches added in the last 2 days) |
+| Schedule | None (manual) | Every day, 02:00 UTC |
+| `archive_file` in control logs | `all_json.zip` | `recently_added_2_json.zip` |
+| MinIO JSON prefix | `match_data/json/snapshot_date={date}/archive=all_json/` | `match_data/json/snapshot_date={date}/archive=recently_added_2_json/` |
+| Bronze write mode | Append, with `revision = MAX(existing) + 1` per match_id | Same — append, same revision rule |
+| Auto-triggers Silver? | **Yes** — `TriggerDagRunOperator` fires `ingest_all_match_data_silver` | **Yes** — `TriggerDagRunOperator` fires `ingest_two_day_match_data_silver` |
+| Auto-triggers Gold? | **Yes** — silver fires `ingest_all_match_data_gold` | **Yes** — silver fires `ingest_two_day_match_data_gold` |
+| Gold lock note | Stop Metabase before triggering bronze (`docker stop compose-metabase-1`) | Same — stop Metabase before the daily bronze run if Gold should auto-complete |
+
+**Why Bronze is append-only (and never `MERGE`d):**
+
+- Auditability: every prior version of a match is recoverable from Bronze.
+- Idempotency: re-running a snapshot can only ever produce duplicate `(match_id, revision)` pairs — never silent data loss.
+- Silver/Gold present the "current view" by reading `MAX(revision) per match_id` in `src/cip/transform/spark/silver/bronze_reader.py:52-57`. The newer incremental wins automatically because its revision is higher than any prior backfill row.
+
+**Why the MinIO prefix is partitioned by archive:**
+
+If the monthly backfill and the daily incremental ever share a `snapshot_date` (e.g. someone manually re-runs the monthly with `--snapshot-date=today`), they used to write to the same MinIO JSON prefix — and the Bronze loader would scan the entire prefix, re-loading the other pipeline's files under its own `_source_file` attribution.
+
+The fix: each archive owns a prefix segment (`archive=all_json/` vs `archive=recently_added_2_json/`). Both extract and Bronze loaders use the per-archive path. The `_manifest.json` is also per-archive (see `manifest_object_key(snapshot_date, archive_file)`).
+
+**Module entry points:**
+
+| Layer | Class | Parameterized fields |
+|---|---|---|
+| Download | `MatchDataDownloader` | `archive_file`, `archive_url`, `min_expected_bytes`, `dag_id` |
+| Extract | `MatchDataExtractor` | `archive_file` (derives `archive_stem`) |
+| Bronze load | `MatchBronzeLoader` | `archive_file`, `archive_url`, `dag_id` |
+| Bronze DQ | `MatchBronzeDQChecker` | `archive_file` |
+
+Defaults of every factory preserve the legacy "full backfill" behavior — the daily pipeline overrides them via the constants in `cip.ingestion.jobs.incremental_match_data`.
+
 ### Writers
 
 - **`PolarsIcebergWriter.create_and_append()`** — for Bronze Polars jobs. Creates table on first run, appends thereafter. Always call with `layer=Layer.BRONZE` and `partition_cols=["_snapshot_date"]`.
@@ -305,7 +347,7 @@ dbt project lives at `models/dbt/` (profile `cricket`, target `dev`). The Gold l
 - `create_bronze_views()` / `create_silver_views()` (misnomers — both create TABLES) filter `WHERE _snapshot_date = (SELECT MAX(_snapshot_date) FROM iceberg_scan(...))`. Silver Iceberg accumulates partitions across re-runs; the filter ensures dim/fact PKs stay unique.
 - `_drop_if_view()` handles legacy view-to-table migration by inspecting `information_schema.tables` before dropping (DROP VIEW IF EXISTS is type-strict in DuckDB).
 
-**DuckDB UI workflow (`make duckdb-ui`):** DuckDB has single-writer + multiple-reader semantics, but the UI itself holds a write lock for its `_ui` internal catalog. **Always run `make duckdb-stop` before triggering `dag_run_gold_dbt_models`**, otherwise the DAG's `refresh_duckdb_views` task fails with a file-lock error. Re-launching the UI afterwards is one command.
+**DuckDB UI workflow (`make duckdb-ui`):** DuckDB has single-writer + multiple-reader semantics, but the UI itself holds a write lock for its `_ui` internal catalog. **Always run `make duckdb-stop` before triggering `ingest_all_match_data_gold` or `ingest_two_day_match_data_gold`**, otherwise the DAG's `refresh_duckdb_views` task fails with a file-lock error. Re-launching the UI afterwards is one command.
 
 The DB file lives at `storage/duckdb/cricket.duckdb` (bind-mounted into the Airflow containers via `compose.dev.yml`, so the host CLI and the DAG share the same file). Bind mount, **not** a Docker named volume — named volumes have stricter lock semantics across host/container processes.
 
@@ -315,7 +357,7 @@ Metabase v0.60.6 (OSS) + community DuckDB driver (`motherduckdb/metabase_duckdb_
 
 - Custom Docker image (`infra/docker/metabase/Dockerfile`) based on `eclipse-temurin:21-jre-jammy` (Ubuntu glibc). The official Alpine image causes JNI segfaults with jemalloc — do not switch back to Alpine.
 - Dashboards are provisioned via `scripts/provision_metabase_dashboards.py`. Re-run after a volume wipe or to push SQL changes.
-- **DuckDB lock with Metabase:** Metabase holds a read connection at all times. Before running `dag_run_gold_dbt_models`, you must stop Metabase (`docker stop compose-metabase-1`), run the DAG, then restart. Or use `make duckdb-stop` for host-side lock release — but that doesn't release Metabase's connection. See `docs/runbooks/dashboard.md` §5.
+- **DuckDB lock with Metabase:** Metabase holds a read connection at all times. Before running `ingest_all_match_data_gold` or `ingest_two_day_match_data_gold`, you must stop Metabase (`docker stop compose-metabase-1`), run the DAG, then restart. Or use `make duckdb-stop` for host-side lock release — but that doesn't release Metabase's connection. See `docs/runbooks/dashboard.md` §5.
 - **Metabase field filter + table aliases:** Metabase dimension field filters emit fully qualified column references (`"gold"."fact_delivery"."batter" = ?`). DuckDB resolves this against the physical table name — if the SQL query uses a table alias (`fd` instead of `gold.fact_delivery`), DuckDB raises `"Referenced table 'gold.fact_delivery' not found! Candidate tables: 'fd'"`. Fix: **never use table aliases in Player Spotlight SQL cards**. Use `gold.fact_delivery.column` throughout.
 - **Cricsheet player names:** Cricsheet uses abbreviated initials (`V Kohli`, `RG Sharma`). Dropdown search for `Virat Kohli` returns nothing. Planned fix: `scripts/data/player_aliases.csv` seed → `gold.player_display_names` table. See `docs/runbooks/dashboard.md` §12.
 - For admin password recovery or full re-provision instructions, see `docs/runbooks/dashboard.md`.
@@ -334,6 +376,7 @@ Metabase v0.60.6 (OSS) + community DuckDB driver (`motherduckdb/metabase_duckdb_
 - Multi-wicket deliveries exist in the source — never assume `(match_id, innings_number, over_number, delivery_number)` is unique in `silver.wickets`.
 - Cricsheet player names are abbreviated initials (`V Kohli`, not `Virat Kohli`). Any consumer that needs display names must maintain a separate alias table — do not assume full names exist in `gold.fact_delivery.batter` or `gold.mart_player_batting.player_name`.
 - `player_of_match` in match JSON is an array and can contain the same name twice (data artefact). Always dedup with `QUALIFY ROW_NUMBER() OVER (PARTITION BY match_id, player_name ...)` when exploding this array.
+- Match JSON files in MinIO are partitioned by archive: `match_data/json/snapshot_date={date}/archive={stem}/…`. Anything that walks the JSON prefix (Bronze loader, DQ checks, manifest reader) must pass `archive_file` so it scopes to the right segment. Code paths that hardcode the prefix without the `archive=` segment will silently read another pipeline's files.
 
 ## graphify
 

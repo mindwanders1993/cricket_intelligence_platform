@@ -1,3 +1,9 @@
+{{ config(
+    materialized='incremental',
+    unique_key=['match_id', 'player_name'],
+    on_schema_change='sync_all_columns'
+) }}
+
 -- Grain: one row per (match_id, player_of_match name).
 -- Bridge table that explodes the player_of_match array. Tied matches with
 -- multiple MOTM (EC-006) get one row per recipient. QUALIFY guards against
@@ -10,9 +16,17 @@ with exploded as (
     from {{ ref('stg_silver_matches') }}
     where player_of_match is not null
 )
-select
-    match_id,
-    player_name,
-    _snapshot_date
-from exploded
-qualify row_number() over (partition by match_id, player_name order by _snapshot_date) = 1
+select * from (
+    select
+        match_id,
+        player_name,
+        _snapshot_date
+    from exploded
+    {% if is_incremental() %}
+    WHERE match_id IN (
+      SELECT match_id FROM control.match_file_audit
+      WHERE gold_loaded_at IS NULL
+    )
+    {% endif %}
+    qualify row_number() over (partition by match_id, player_name order by _snapshot_date) = 1
+)

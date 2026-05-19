@@ -32,7 +32,49 @@ METABASE_DB_NAME = os.environ.get("METABASE_DB_NAME", "Cricket Lakehouse")
 TIMEOUT = 120
 
 
+def _first_boot_setup() -> None:
+    """If Metabase is fresh (volume wiped), bootstrap admin + DuckDB connection."""
+    props = requests.get(f"{METABASE_URL}/api/session/properties", timeout=TIMEOUT).json()
+    token = props.get("setup-token")
+    if not token:
+        return  # already past the setup wizard
+
+    print("Metabase is uninitialised — running first-boot setup…")
+    r = requests.post(
+        f"{METABASE_URL}/api/setup",
+        json={
+            "token": token,
+            "user": {
+                "first_name": "Cricket",
+                "last_name": "Admin",
+                "email": METABASE_USER,
+                "password": METABASE_PASSWORD,
+                "site_name": "Cricket Intelligence Platform",
+            },
+            "prefs": {
+                "site_name": "Cricket Intelligence Platform",
+                "allow_tracking": False,
+            },
+        },
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    session_id = r.json()["id"]
+    requests.post(
+        f"{METABASE_URL}/api/database",
+        headers={"X-Metabase-Session": session_id},
+        json={
+            "name": METABASE_DB_NAME,
+            "engine": "duckdb",
+            "details": {"database_file": "/data/cricket.duckdb", "read_only": True},
+        },
+        timeout=TIMEOUT,
+    )
+    print(f"  ✅ Admin user + {METABASE_DB_NAME!r} connection created.")
+
+
 def login() -> tuple[requests.Session, int]:
+    _first_boot_setup()
     s = requests.Session()
     r = s.post(
         f"{METABASE_URL}/api/session",
@@ -299,14 +341,17 @@ def make_player_cards() -> list[Card]:
         Card(
             "Player Career Headline",
             """
-            WITH innings_scores AS (
+            WITH player_names AS (
+                SELECT cricsheet_name FROM gold.player_display_names WHERE display_name = {{player}}
+            ),
+            innings_scores AS (
                 SELECT
                     match_id, innings_number, match_type,
                     SUM(runs_batter) AS innings_runs,
                     SUM(CASE WHEN is_legal_ball THEN 1 ELSE 0 END) AS balls_faced,
-                    MAX(CASE WHEN is_wicket AND player_out = {{player}} THEN 1 ELSE 0 END) AS dismissed
+                    MAX(CASE WHEN is_wicket AND player_out IN (SELECT cricsheet_name FROM player_names) THEN 1 ELSE 0 END) AS dismissed
                 FROM gold.fact_delivery
-                WHERE batter = {{player}}
+                WHERE batter IN (SELECT cricsheet_name FROM player_names)
                 GROUP BY match_id, innings_number, match_type
             )
             SELECT
@@ -326,11 +371,14 @@ def make_player_cards() -> list[Card]:
         Card(
             "Player Format Split",
             """
+            WITH player_names AS (
+                SELECT cricsheet_name FROM gold.player_display_names WHERE display_name = {{player}}
+            )
             SELECT
                 match_type,
                 SUM(runs_batter) AS runs
             FROM gold.fact_delivery
-            WHERE batter = {{player}}
+            WHERE batter IN (SELECT cricsheet_name FROM player_names)
             GROUP BY match_type
             ORDER BY runs DESC
             """.strip(),
@@ -344,11 +392,14 @@ def make_player_cards() -> list[Card]:
         Card(
             "Player Season Trend",
             """
+            WITH player_names AS (
+                SELECT cricsheet_name FROM gold.player_display_names WHERE display_name = {{player}}
+            )
             SELECT
                 season,
                 SUM(runs_batter) AS runs
             FROM gold.fact_delivery
-            WHERE batter = {{player}}
+            WHERE batter IN (SELECT cricsheet_name FROM player_names)
             GROUP BY season
             ORDER BY season
             """.strip(),
@@ -362,6 +413,9 @@ def make_player_cards() -> list[Card]:
         Card(
             "Player Bowling Card",
             """
+            WITH player_names AS (
+                SELECT cricsheet_name FROM gold.player_display_names WHERE display_name = {{player}}
+            )
             SELECT
                 SUM(CASE WHEN is_bowler_wicket THEN 1 ELSE 0 END)             AS wickets,
                 COUNT(DISTINCT (match_id || '-' || innings_number))           AS innings,
@@ -371,7 +425,7 @@ def make_player_cards() -> list[Card]:
                 ROUND(SUM(runs_total)*1.0
                       / NULLIF(SUM(CASE WHEN is_bowler_wicket THEN 1 ELSE 0 END),0), 2) AS bowling_avg
             FROM gold.fact_delivery
-            WHERE bowler = {{player}}
+            WHERE bowler IN (SELECT cricsheet_name FROM player_names)
             """.strip(),
             display="table",
             template_tags=pt(),
@@ -472,7 +526,7 @@ def main() -> None:
         db_id,
         Card(
             "Player Names",
-            "SELECT DISTINCT batter AS player_name FROM gold.fact_delivery WHERE batter IS NOT NULL ORDER BY 1",
+            "SELECT display_name AS player_name FROM gold.player_display_names ORDER BY 1",
         ),
     )
     s.put(f"{METABASE_URL}/api/card/{player_list_card_id}", json={"collection_id": None}, timeout=TIMEOUT)
@@ -483,7 +537,7 @@ def main() -> None:
     dash_id = create_dashboard(
         s,
         "Player Spotlight",
-        "Career view for any player. Filter by player name as it appears in Cricsheet (e.g. 'V Kohli', not 'Virat Kohli').",
+        "Career view for any player. Filter by full name (e.g. 'Virat Kohli'). Names are resolved from the Cricsheet Register.",
     )
 
     dash_param_id = str(uuid.uuid4())[:8]
@@ -496,7 +550,7 @@ def main() -> None:
                     "name": "Player",
                     "slug": "player",
                     "type": "category",
-                    "default": "V Kohli",
+                    "default": "Virat Kohli",
                     "values_source_type": "card",
                     "values_source_config": {
                         "card_id": player_list_card_id,

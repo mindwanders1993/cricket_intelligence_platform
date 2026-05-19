@@ -503,7 +503,7 @@ LIMIT 10;
 
 ## 5. Refresh workflow (when new data arrives)
 
-DuckDB allows **multiple concurrent readers** but **only one writer**. Metabase holds a read connection; the Gold DAG (`dag_run_gold_dbt_models`) writes. They cannot overlap.
+DuckDB allows **multiple concurrent readers** but **only one writer**. Metabase holds a read connection; the Gold DAGs (`ingest_all_match_data_gold`, `ingest_two_day_match_data_gold`) write. They cannot overlap.
 
 ```bash
 # 1. Stop Metabase (releases its read locks)
@@ -512,9 +512,13 @@ docker stop compose-metabase-1
 # 2. Stop the host DuckDB CLI/UI if it's running
 make duckdb-stop
 
-# 3. Trigger the Gold refresh DAG via the Airflow UI or:
+# 3. Trigger the appropriate Gold DAG via the Airflow UI or:
+# Incremental (normal after Silver build):
 docker exec compose-airflow-scheduler-1 \
-  airflow dags trigger dag_run_gold_dbt_models
+  airflow dags trigger ingest_two_day_match_data_gold
+# Full rebuild (after schema changes or volume wipe):
+docker exec compose-airflow-scheduler-1 \
+  airflow dags trigger ingest_all_match_data_gold
 
 # 4. Restart Metabase
 docker start compose-metabase-1

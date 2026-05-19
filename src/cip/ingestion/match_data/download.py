@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import tempfile
 import time
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +28,59 @@ _ARCHIVE_URL = "https://cricsheet.org/downloads/all_json.zip"
 _ARCHIVE_FILE = "all_json.zip"
 _MIN_EXPECTED_BYTES = 10 * 1024 * 1024  # 10 MB
 _DAG_ID = "dag_ingest_match_data"
+
+# Public defaults — used by both `from_settings()` (full backfill) and by
+# the incremental pipeline (which overrides via constructor / factory).
+DEFAULT_ARCHIVE_URL = _ARCHIVE_URL
+DEFAULT_ARCHIVE_FILE = _ARCHIVE_FILE
+DEFAULT_MIN_EXPECTED_BYTES = _MIN_EXPECTED_BYTES
+
+
+def _stream_download(
+    url: str,
+    dest_path: Path,
+    *,
+    retries: int = 5,
+    chunk_size: int = 1024 * 1024,
+) -> None:
+    """Stream-download url to dest_path with resume and internal retry.
+
+    Uses HTTP Range requests so a partial file is continued rather than
+    restarted.  If the server returns 200 instead of 206 it does not support
+    Range — the file is restarted from byte 0.  Retries up to `retries` times
+    with exponential backoff before propagating the exception.
+    """
+    import requests  # noqa: PLC0415
+
+    for attempt in range(1, retries + 2):  # attempts 1..retries+1
+        try:
+            downloaded = dest_path.stat().st_size if dest_path.exists() else 0
+            headers = {"Range": f"bytes={downloaded}-"} if downloaded else {}
+            mode = "ab" if downloaded else "wb"
+
+            with requests.get(url, headers=headers, stream=True, timeout=120) as resp:
+                if resp.status_code == 200 and downloaded:
+                    # Server ignored the Range header — restart from scratch.
+                    downloaded = 0
+                    mode = "wb"
+                elif resp.status_code not in (200, 206):
+                    resp.raise_for_status()
+
+                with open(dest_path, mode) as fh:
+                    for chunk in resp.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            fh.write(chunk)
+            return  # success
+
+        except Exception as exc:
+            if attempt > retries:
+                raise
+            wait = 2**attempt
+            logger.warning(
+                "Download attempt failed — retrying",
+                extra={"attempt": attempt, "wait_seconds": wait, "error": str(exc)},
+            )
+            time.sleep(wait)
 
 
 @dataclass(frozen=True)
@@ -52,17 +104,42 @@ class MatchDataDownloader:
     archive_download_id in control.bronze_match_ingestion_log.
     """
 
-    def __init__(self, minio: MinIOClient, pg_dsn: str) -> None:
+    def __init__(
+        self,
+        minio: MinIOClient,
+        pg_dsn: str,
+        archive_file: str = DEFAULT_ARCHIVE_FILE,
+        archive_url: str = DEFAULT_ARCHIVE_URL,
+        min_expected_bytes: int = DEFAULT_MIN_EXPECTED_BYTES,
+        dag_id: str = _DAG_ID,
+    ) -> None:
         self._minio = minio
         self._pg_dsn = pg_dsn
+        self._archive_file = archive_file
+        self._archive_url = archive_url
+        self._min_expected_bytes = min_expected_bytes
+        self._dag_id = dag_id
 
     @classmethod
-    def from_settings(cls) -> "MatchDataDownloader":
+    def from_settings(
+        cls,
+        archive_file: str = DEFAULT_ARCHIVE_FILE,
+        archive_url: str = DEFAULT_ARCHIVE_URL,
+        min_expected_bytes: int = DEFAULT_MIN_EXPECTED_BYTES,
+        dag_id: str = _DAG_ID,
+    ) -> "MatchDataDownloader":
         from cip.common.settings import get_settings
 
         cfg = get_settings()
         pg_dsn = cfg.postgres.dsn.replace("postgresql+psycopg2://", "postgresql://")
-        return cls(minio=MinIOClient.from_settings(), pg_dsn=pg_dsn)
+        return cls(
+            minio=MinIOClient.from_settings(),
+            pg_dsn=pg_dsn,
+            archive_file=archive_file,
+            archive_url=archive_url,
+            min_expected_bytes=min_expected_bytes,
+            dag_id=dag_id,
+        )
 
     def download(
         self,
@@ -99,18 +176,18 @@ class MatchDataDownloader:
 
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                local_path = Path(tmp_dir) / _ARCHIVE_FILE
+                local_path = Path(tmp_dir) / self._archive_file
 
                 logger.info(
                     "Downloading archive",
-                    extra={"url": _ARCHIVE_URL, "snapshot_date": snapshot_date},
+                    extra={"url": self._archive_url, "snapshot_date": snapshot_date},
                 )
-                urllib.request.urlretrieve(_ARCHIVE_URL, local_path)  # noqa: S310
+                _stream_download(self._archive_url, local_path)
 
                 file_size = local_path.stat().st_size
-                if file_size < _MIN_EXPECTED_BYTES:
+                if file_size < self._min_expected_bytes:
                     raise ValueError(
-                        f"Archive too small: {file_size} bytes < {_MIN_EXPECTED_BYTES} minimum. "
+                        f"Archive too small: {file_size} bytes < {self._min_expected_bytes} minimum. "
                         f"Possible truncated download or upstream issue."
                     )
 
@@ -175,7 +252,7 @@ class MatchDataDownloader:
                     ORDER BY id DESC
                     LIMIT 1
                     """,
-                    (_ARCHIVE_FILE, snapshot_date),
+                    (self._archive_file, snapshot_date),
                 )
                 row = cur.fetchone()
 
@@ -205,7 +282,7 @@ class MatchDataDownloader:
                     ) VALUES (%s, %s, %s, %s, %s, 'RUNNING')
                     RETURNING id
                     """,
-                    (pipeline_run_id, _DAG_ID, _ARCHIVE_FILE, _ARCHIVE_URL, snapshot_date),
+                    (pipeline_run_id, self._dag_id, self._archive_file, self._archive_url, snapshot_date),
                 )
                 log_id = cur.fetchone()[0]
             conn.commit()
@@ -240,8 +317,8 @@ class MatchDataDownloader:
 
         return DownloadRecord(
             id=log_id,
-            archive_file=_ARCHIVE_FILE,
-            source_url=_ARCHIVE_URL,
+            archive_file=self._archive_file,
+            source_url=self._archive_url,
             snapshot_date=snapshot_date,
             landing_path=landing_path,
             file_size_bytes=file_size_bytes,
