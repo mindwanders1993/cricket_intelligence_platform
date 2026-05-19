@@ -1,4 +1,4 @@
-# TODO: per-mart incrementalisation
+# NOTE: per-mart incrementalisation
 # Aggregate/mart models in this directory remain materialized='table'.
 # They aggregate across the full corpus, so naive incremental filtering
 # would drop seasons/players that span pending and already-loaded matches.
