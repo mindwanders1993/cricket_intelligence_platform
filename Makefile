@@ -123,3 +123,24 @@ refresh-gold:
 	@docker start compose-metabase-1 >/dev/null
 	@until curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; do sleep 5; done
 	@echo "✓ Gold refreshed, Metabase healthy"
+
+# ── Dashboard (Observable Framework) ──
+.PHONY: dashboard-install dashboard-dev dashboard-build dashboard-clean
+
+## Install dashboard npm dependencies (first-time setup).
+dashboard-install:
+	cd dashboard && npm install
+
+## Run dashboard dev server on http://localhost:3030.
+## Requires `poetry shell` active (or `poetry env activate`) so Python data
+## loaders can `import duckdb`. Coexists with Metabase (DuckDB read-only).
+dashboard-dev:
+	cd dashboard && npm run dev
+
+## Build static dashboard site to dashboard/dist/.
+dashboard-build:
+	cd dashboard && npm run build
+
+## Remove dashboard build artifacts and caches.
+dashboard-clean:
+	cd dashboard && rm -rf dist node_modules src/.observablehq/cache
