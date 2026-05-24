@@ -1,264 +1,282 @@
 # Cricket Intelligence Platform — Development Plan
-## Scope: Source → Landing → Bronze → Silver → Gold (Data Warehouse)
 
-> Build in **vertical slices**. The Register identity model affects Silver joins and Gold dimensions.
-> Every big task produces a working, tested slice — not isolated tooling.
+> Canonical roadmap. Personal scratch version lives at `~/.claude/plans/hi-soft-prism.md`.
+> Last updated: 2026-05-24.
+
+The platform is built in **vertical slices** end-to-end (Source → Bronze → Silver → Gold). Phase 1–4 are complete and shipped on `main`. The current revamp (v2) executes the deferred Phase 5/6/7 plus a set of extensions that turn the platform into a senior-DE portfolio asset with open-standards-first architecture.
 
 ---
 
 ## Status legend
-- ✅ Done — built, tested, lint-clean
+
+- ✅ Done — built, tested, lint-clean, merged to `main`
 - 🔄 In progress — partially built
 - ⬜ Not started
 
 ---
 
-## Big Task 1 — Project and Environment Foundation ✅
+## Part A — Foundation phases (✅ shipped)
 
-> Make the repo runnable, reproducible, and aligned with the HLD.
-
-### Repo essentials ✅
-- [x] `.env.example` with all MinIO / PostgreSQL / Airflow / Iceberg vars
-- [x] `pyproject.toml` with all runtime + dev deps (polars, pyiceberg, pydantic-settings, airflow, etc.)
-- [x] `Makefile` — `up`, `down`, `bootstrap`, `test`, `lint`, `dag-validate`
-- [x] `.pre-commit-config.yaml` — ruff, black, isort, pytest hook
-
-### Local infrastructure ✅
-- [x] `infra/compose/compose.base.yml` — MinIO, PostgreSQL, Iceberg REST, Airflow (init + webserver + scheduler)
-- [x] `infra/compose/compose.dev.yml` — dev overrides
-- [x] `infra/bootstrap/create-buckets.sh` — creates all MinIO buckets
-- [x] `infra/bootstrap/init-metastore.sql` — control schema DDL (idempotent)
-
-### Control schema tables ✅ (in `init-metastore.sql`)
-- [x] `control.register_ingestion_log` — per-file landing audit for Register pipeline
-- [x] `control.register_schema_versions` — column fingerprint + drift detection
-- [x] `control.register_change_log` — delta row count tracking between snapshots
-- [x] `control.archive_download_log` — per-archive landing audit for match pipeline
-- [x] `control.bronze_match_ingestion_log` — per-run Bronze load metrics
-- [x] `control.dq_results` — central DQ result store (all layers)
-- [x] `control.v_latest_register_snapshot` — convenience view
-- [x] `control.v_dq_failures` — convenience view
-- [x] `control.v_latest_archive_snapshot` — convenience view
-
-### Shared platform modules ✅ (all under `src/cip/`)
-- [x] `common/settings.py` — `PlatformSettings` singleton + `get_settings()`
-- [x] `common/logging.py` — structlog wrapper (`get_logger`, `get_context`, `bind_context`)
-- [x] `common/exceptions.py` — platform exception hierarchy
-- [x] `common/contracts/enums.py` — all `StrEnum` for Layer, MatchType, WicketKind, etc.
-- [x] `common/contracts/naming.py` — `TableName`, `PathBuilder`, `META`, `DagNames`, `IcebergProperties`
-- [x] `ingestion/io/minio.py` — `MinIOClient` with `health_check()`, `from_settings()`
-- [x] `transform/shared/readers.py` — `PolarsIcebergReader`, `SparkIcebergReader`, `DuckDBIcebergReader`
-- [x] `transform/shared/writers.py` — `PolarsIcebergWriter`, `SparkIcebergWriter`
-- [x] `transform/shared/partitioning.py` — `PartitionStrategy` registry
-
-### Tests ✅
-- [x] `tests/unit/test_settings.py` — 16 tests: repo root, Docker defaults, DSN, env override, S3 paths
-- [x] `tests/unit/conftest.py` — `clear_settings_cache` fixture (autouse)
-
----
-
-## Big Task 2 — Source Understanding and Contracts ✅
-
-> Document source behavior before building pipelines. See `source_contracts.md` and `architecture.md`.
-
-- [x] Source inventory documented (SRC-001, SRC-002, SRC-003)
-- [x] Match JSON schema documented (meta, info, innings, deliveries, wickets)
-- [x] Register CSV schemas documented (people.csv, names.csv)
-- [x] All 14 known edge cases recorded
-- [x] Warehouse contract defined: metadata columns, partition strategy, idempotency rules
-- [x] Naming standards enforced via `TableName`, `PathBuilder`, `META` in code
-
----
-
-## Big Task 3 — Register Pipeline (first vertical slice) 🔄
-
-> Register = identity backbone. Must be stable before Silver match joins.
-
-### Landing ingestion ✅
-- [x] `ingestion/register/download.py` — `RegisterDownloader` downloads people.csv + names.csv
-- [x] SHA-256 checksum validation
-- [x] Date-partitioned MinIO landing: `s3://cricket-landing/register_csv/snapshot_date=YYYY-MM-DD/`
-- [x] Audit row written to `control.register_ingestion_log`
-- [x] Column fingerprint + drift detection written to `control.register_schema_versions`
-
-### Bronze load ✅
-- [x] `ingestion/register/normalize.py` — `RegisterNormalizer` reads landing CSVs, all-string Polars, attaches `_row_hash` + metadata
-- [x] `ingestion/register/parse.py` — `RegisterParser` splits normalized frame into 3 shaped frames
-- [x] `transform/polars/bronze/register_loader.py` — `RegisterLoader` writes 3 Iceberg Bronze tables
-- [x] Target tables (via `TableName.bronze()`):
-  - `cricket.bronze.register_people` — one row per person (identifier, name, unique_name + meta)
-  - `cricket.bronze.register_identifiers` — unpivoted key_* cols (identifier, key_source, key_value + meta)
-  - `cricket.bronze.register_name_variations` — one row per alias from names.csv (identifier, name + meta)
-- [x] Partition: `_snapshot_date` (IdentityTransform)
-- [x] `load()` → append-only; `overwrite_snapshot()` → delete partition then append
-
-### Airflow DAG ✅
-- [x] `orchestration/airflow/dags/dag_ingest_people_and_names.py`
-- [x] Schedule: Sunday 00:30 UTC (06:00 IST)
-- [x] Tasks: `check_infra` → `download_and_land` → (`schema_drift_check` → `schema_drift_alert`) + `load_bronze` → `done`
-- [x] `force=True` propagation via Jinja from `dag_run.conf`
-- [x] Schema drift short-circuit branch (informational, never blocks Bronze load)
-
-### Job entrypoint ✅
-- [x] `ingestion/jobs/ingest_people_and_names.py` — CLI + Airflow callable wrappers
-- [x] `--task all/download/bronze/dbt` + `--force` + `--snapshot-date`
-
-### Tests ✅ (63 unit tests, all passing)
-- [x] `tests/unit/ingestion/register/test_normalize.py` — 18 tests
-- [x] `tests/unit/ingestion/register/test_parse.py` — 4 tests
-- [x] `tests/unit/transform/polars/bronze/test_register_loader.py` — 24 tests
-
-### Register Silver ⬜
-- [ ] `silver_persons` — typed, SCD2-tracked persons dimension
-- [ ] `silver_person_identifiers` — one row per (identifier, key_source)
-- [ ] `silver_name_variations` — deduplicated aliases
-
-### Register DQ ⬜
-- [ ] Null identifier checks
-- [ ] Duplicate identifier checks in people.csv
-- [ ] Orphan check: names.csv identifiers not in people.csv
-- [ ] Row count threshold checks (>2% drop = anomaly)
-- [ ] Persist to `control.dq_results`
-
----
-
-## Big Task 4 — Match Source Ingestion and Bronze ⬜
-
-> Historical backfill from `all_matches.zip` (~21,600 JSON match files).
-
-### Match downloader ⬜
-- [ ] `ingestion/cricsheet/download.py` — download `all_matches.zip` from cricsheet.org
-- [ ] Store raw zip at `s3://cricket-landing/raw_zips/snapshot_date=.../all_matches.zip`
-- [ ] SHA-256 checksum + `control.archive_download_log` row
-- [ ] `ingestion/cricsheet/extract.py` — extract JSON files to `s3://cricket-landing/extracted_json/snapshot_date=.../`
-- [ ] Track file inventory (count, names) in log
-
-### Bronze match documents ⬜
-- [ ] `transform/polars/bronze/match_loader.py`
-- [ ] Read each JSON file, flatten top-level `meta` + `info` + raw `innings` blob
-- [ ] All-string ingestion for document-level fields
-- [ ] Target: `cricket.bronze.match_documents` — one row per (match_id, revision)
-- [ ] Partition: `_snapshot_date`
-- [ ] Dedup key: `(match_id, revision)` — corrections append as new revision rows
-- [ ] Log to `control.bronze_match_ingestion_log`
-
-### Airflow DAG ⬜
-- [ ] `dag_ingest_all_match_data`
-- [ ] Tasks: `check_infra` → `download_archive` → `extract_json` → `load_bronze` → `dq_check` → `done`
-- [ ] Skip already-processed snapshots via `control.archive_download_log`
-
----
-
-## Big Task 5 — Match Silver Core Entities ⬜
-
-> PySpark explodes nested JSON into conformed relational tables.
-
-### Spark environment ⬜
-- [ ] Spark Docker image with Iceberg runtime jars
-- [ ] MinIO S3 credentials config in SparkSession
-- [ ] Verify Spark reads Bronze and writes Silver Iceberg tables
-
-### Core Silver tables ⬜ (all via `SparkIcebergWriter.dynamic_overwrite()`)
-- [ ] `cricket.silver.matches` — one row per match, typed fields
-- [ ] `cricket.silver.innings` — one row per innings
-- [ ] `cricket.silver.deliveries` — one row per ball
-- [ ] `cricket.silver.wickets` — one row per wicket (from `deliveries[].wickets[]`)
-- [ ] `cricket.silver.teams` — distinct teams
-- [ ] `cricket.silver.venues` — distinct venues
-- [ ] `cricket.silver.competitions` — distinct events/competitions
-
-### Identity resolution ⬜
-- [ ] Extract `info.registry.people` dict (name → identifier) from each match
-- [ ] `cricket.silver.match_players` — join registry → `bronze.register_people` → resolved `identifier`
-- [ ] `cricket.silver.match_officials` — umpires, tv_umpires, match_referees
-- [ ] Unmatched name audit table for any player not in registry
-
-### Key Silver design rules
-- `season` must be normalised: string "2011/12" / string "2026" / integer 2007 → all to string "2011/12" or "2026"
-- `wickets[].player_out` is the authoritative dismissal subject — NOT `batter` (differ on run-outs)
-- Silver reads `MAX(revision)` per `match_id` from Bronze — corrections handled automatically
-- SCD2 columns: `_is_current`, `_valid_from`, `_valid_to` on all Silver dimension tables
-
----
-
-## Big Task 6 — Silver DQ and Reconciliation ⬜
-
-### Structural checks ⬜
-- [ ] Null PK checks on all Silver tables
-- [ ] Duplicate grain checks
-- [ ] Accepted-value checks (match_type, gender, toss decision, wicket kind, extra type)
-- [ ] Referential integrity: deliveries → innings → matches
-
-### Cricket-specific reconciliation ⬜
-- [ ] Innings total = sum of delivery totals
-- [ ] Wicket count ≤ 10 per innings
-- [ ] Over/ball sequence is contiguous (no gaps, no duplicates)
-- [ ] Winner in outcome consistent with by-runs or by-wickets margin
-- [ ] No-result / tie matches have no `by` block
-
-### Identity quality ⬜
-- [ ] % of match players resolved to a Register identifier
-- [ ] Names present in matches but absent from Register → audit table
-- [ ] Persist run-level summary to `control.dq_results`
-
----
-
-## Big Task 7 — Gold Warehouse Foundation ⬜
-
-### dbt project ⬜
-- [ ] `models/dbt/dbt_project.yml` + `profiles.yml`
-- [ ] Sources defined over all Silver Iceberg tables
-- [ ] Folder structure: `staging/`, `intermediate/`, `dimensions/`, `facts/`, `marts/`
-
-### Dimensions ⬜
-- [ ] `dim_player` — from `silver.persons` + `silver.person_identifiers`
-- [ ] `dim_match` — from `silver.matches`
-- [ ] `dim_team` — from `silver.teams`
-- [ ] `dim_venue` — from `silver.venues`
-- [ ] `dim_competition` — from `silver.competitions`
-- [ ] `dim_date` — generated date spine
-
-### Facts ⬜
-- [ ] `fact_delivery` — grain: one row per ball
-- [ ] `fact_innings` — grain: one row per innings
-- [ ] `fact_match_result` — grain: one row per match
-- [ ] `fact_player_match` — grain: one row per (player, match)
-
----
-
-## Big Task 8 — Gold Marts and Warehouse Validation ⬜
-
-### Marts ⬜
-- [ ] `mart_player_batting` — career and match-level batting stats
-- [ ] `mart_player_bowling` — career and match-level bowling stats
-- [ ] `mart_team_performance` — win/loss/NR by format, venue, season
-- [ ] `mart_venue_dna` — scoring patterns by ground
-- [ ] `mart_phase_scoring` — powerplay / middle / death run rates
-- [ ] `mart_toss_outcome` — toss decision win correlation
-- [ ] `mart_matchup_analysis` — batter vs bowler head-to-head
-
-### dbt quality ⬜
-- [ ] `not_null` and `unique` tests on all dimension PKs
-- [ ] Relationship tests: facts → dims
-- [ ] Accepted-values tests on categorical columns
-- [ ] Source freshness checks
-
-### Warehouse validation ⬜
-- [ ] DuckDB can query Gold tables via MinIO/Iceberg extension
-- [ ] Row counts Silver → Gold reconcile
-- [ ] Sample match calculations validated against known results
-
----
-
-## Execution order summary
+These are the eight "Big Tasks" that brought the platform from zero to a working Source-to-Gold lakehouse with Metabase BI. They are kept here as a one-line summary; the detailed historical task lists live in git history (see `docs/architecture/as-built.md` for the current snapshot).
 
 | # | Big Task | Status | Output |
-|---|----------|--------|--------|
-| 1 | Foundation | ✅ Done | Runnable platform skeleton, 63 passing tests |
-| 2 | Source contracts | ✅ Done | `source_contracts.md`, `architecture.md` |
-| 3 | Register pipeline | 🔄 Bronze done, Silver ⬜ | Register landing → Bronze Iceberg |
-| 4 | Match ingestion + Bronze | ⬜ | Archive download → Bronze match_documents |
-| 5 | Match Silver | ⬜ | Conformed relational Silver layer |
-| 6 | Silver DQ | ⬜ | Reconciliation + trust layer |
-| 7 | Gold foundation | ⬜ | dbt dims + facts |
-| 8 | Gold marts + validation | ⬜ | Queryable warehouse |
+|---|---|---|---|
+| 1 | Project + environment foundation | ✅ | Runnable platform skeleton, control schema, shared `src/cip/` modules, Makefile, 16 settings tests |
+| 2 | Source understanding + contracts | ✅ | `docs/architecture/source-contracts.md`, `source-warehouse-contracts.md`, 14 known edge cases documented |
+| 3 | Register pipeline (people + names) | ✅ | Landing → Bronze → Silver (Polars + PyIceberg); schema drift detection; weekly DAGs |
+| 4 | Match ingestion + Bronze | ✅ | `all_json.zip` (~21k matches) + daily `recently_added_2_json.zip`; audit-driven dedup via `control.match_file_audit`; `(match_id, revision)` PK |
+| 5 | Match Silver explosion | ✅ | PySpark + Iceberg: matches / innings / deliveries / wickets / match_players / match_officials / teams / venues / competitions |
+| 6 | Silver DQ + reconciliation | ✅ | Structural + cricket-specific checks; `control.dq_results`; 31 active checks across landing/bronze/silver |
+| 7 | Gold warehouse foundation | ✅ | dbt project (`models/dbt/`), DuckDB target; staging, dims, facts |
+| 8 | Gold marts + warehouse validation | ✅ | 6 dims + 5 facts + 7 marts; 40 dbt tests; `analysis/validation_queries.sql` (9 sections, ~30 queries); Metabase BI provisioned |
+
+**Snapshot of `main` (2026-05-24):** Iceberg lakehouse end-to-end, 8 Airflow DAGs with auto-trigger chains, dbt star schema in DuckDB, Metabase dashboards, Observable Framework dashboard scaffolded at M1–M2. See `docs/architecture/as-built.md` for module-level detail.
+
+---
+
+## Part B — Revamp v2 (current scope, ✅ planned / ⬜ in flight)
+
+> Goal: execute Phases 5/6/7 of the original roadmap and add open-standards extensions so the platform demonstrates senior-DE depth. Targets Senior Data Engineer roles (primary: Harness Cloud Cost Management).
+>
+> **North star:** open standards first → OSS implementations → enterprise-swappable. Endpoint config — not code — is the local-to-cloud delta. See `docs/adr/0004-open-standards-first.md`.
+>
+> **Out of scope (deferred):** real-time streaming, Java/Go service, ML model training, production AWS deployment with billing, Kubeflow.
+
+Default execution order is linear (Sprint 0 → 1 → 2 → 3 → 4). Each sprint is independently shippable.
+
+### Sprint 0 — Observability retrofit + dbt depth foundation (~2 weeks) ⬜
+
+> Unlocks every later sprint. Highest dependency density.
+
+#### Observability spine ⬜
+- [ ] `ObservabilitySettings` sub-settings in `src/cip/common/settings.py` (OTEL endpoint, OpenLineage URL, service name, flags)
+- [ ] `src/cip/observability/{__init__.py, lineage.py, telemetry.py, cost_emission.py}`
+- [ ] `infra/compose/compose.observability.yml` — services: `otel-collector`, `prometheus`, `grafana`, `tempo`, `marquez`
+- [ ] `observability/grafana/{datasources,dashboards}/` — datasource configs + `pipeline_health.json`
+- [ ] `observability/prometheus/prometheus.yml`
+- [ ] `control.pipeline_cost_event` DDL added to `infra/bootstrap/init-metastore.sql`
+- [ ] Instrument `src/cip/transform/shared/writers.py` — wrap `PolarsIcebergWriter.create_and_append/overwrite_partition` and `SparkIcebergWriter.dynamic_overwrite` with OTEL spans + emit OpenLineage `RunEvent` + call `cost_emission.record(...)`
+- [ ] Install `openlineage-airflow` listener via env vars across all 8 DAGs
+- [ ] `Makefile` — `obs-up`, `obs-down`
+- [ ] Unit tests in `tests/unit/observability/`
+
+#### dbt depth ⬜
+- [ ] `models/dbt/snapshots/dim_player_snapshot.sql` — SCD2 snapshot keyed on `person_id`
+- [ ] `models/dbt/models/marts/dimensions/dim_player_scd2.sql` — SCD2 surface
+- [ ] `dim_player.sql` → view over `dim_player_scd2 WHERE dbt_valid_to IS NULL`
+- [ ] Convert `fact_delivery` + `fact_player_match` to `materialized='incremental'`
+- [ ] `models/dbt/models/semantic_models/{players, matches, deliveries}.yml` — MetricFlow semantic models
+- [ ] `models/dbt/models/metrics/{batting_average, strike_rate, economy_rate, boundary_pct, run_rate}.yml` — 5 declarative metrics
+- [ ] `models/dbt/models/exposures.yml` — declare exposures for Metabase, Observable dashboard, future Lightdash + AI assistant
+- [ ] `models/dbt/models/sources.yml` — add `loaded_at_field` + freshness SLAs
+- [ ] `models/dbt/macros/test_grain_uniqueness.sql` — reusable grain test
+
+#### Data quality (Soda Core baseline) ⬜
+- [ ] `quality/soda/configuration.yml` — DuckDB datasource
+- [ ] `quality/soda/checks/{silver_deliveries, silver_matches, gold_fact_delivery}.yml`
+- [ ] `make soda-scan` target
+- [ ] Hook into pre-PR validation pipeline
+
+#### Architecture decisions ⬜
+- [ ] Fill `docs/adr/0001-use-modular-monolith.md`
+- [ ] Fill `docs/adr/0002-use-apache-iceberg.md`
+- [ ] Fill `docs/adr/0003-use-airflow-for-orchestration.md`
+- [ ] Write `docs/adr/0004-open-standards-first.md` (founding principle for v2)
+
+#### Sprint 0 verification gate
+- Full stack up via `make up && make obs-up`
+- Trigger `ingest_all_match_data_bronze` → Marquez shows lineage; Grafana shows metrics; `control.pipeline_cost_event` populated
+- `dbt snapshot && dbt build` clean; `dim_player_scd2` populated
+- Re-running `dbt build` with no source change is a no-op for incremental facts
+- `mf list metrics` returns ≥5 metrics
+- `soda scan` green
+- `poetry run pytest tests/unit/observability/ tests/unit/transform/` clean
+- `make dag-validate` clean
+
+---
+
+### Sprint 1 — FastAPI gateway + FinOps mart + Lightdash platform dashboard (~1.5 weeks) ⬜
+
+> Brings the API layer online. First Harness-CCM-shaped artefact ships.
+
+#### FastAPI gateway ⬜
+- [ ] `src/cip/serving/api/main.py` — FastAPI app, OTEL instrumented, OpenAPI metadata
+- [ ] `src/cip/serving/api/dependencies.py` — DI for settings, DuckDB pool, MetricFlow client
+- [ ] `src/cip/serving/api/routers/{health, metrics, query, explain, catalog, chat}.py`
+- [ ] `src/cip/serving/api/services/{metricflow_client, duckdb_pool, sql_guardrails}.py`
+- [ ] AST-walked `sql_guardrails`: blocklist (DROP/DELETE/UPDATE/ATTACH/CREATE), enforce semantic-layer-only sources for chat-issued queries
+- [ ] `make api-up`, `api-down`
+
+#### FinOps cost mart ⬜
+- [ ] `models/dbt/models/staging/stg_control__pipeline_cost.sql`
+- [ ] `models/dbt/models/marts/aggregates/mart_pipeline_cost_daily.sql`
+- [ ] `models/dbt/models/marts/aggregates/mart_top_expensive_tasks.sql`
+- [ ] `models/dbt/models/marts/aggregates/mart_data_freshness.sql`
+- [ ] `models/dbt/dbt_project.yml` — `vars:` for `$/executor-second`, `$/TB-written`, `$/row-written` constants
+- [ ] Extend `scripts/provision_metabase_dashboards.py` with "FinOps — Pipeline Cost" dashboard
+
+#### Lightdash platform dashboard ⬜
+- [ ] `infra/compose/compose.lightdash.yml`
+- [ ] `infra/lightdash/lightdash.yml` — points at dbt project
+- [ ] `infra/lightdash/dashboards/{pipeline_health, finops, data_quality}.yml` — config-as-code dashboards
+- [ ] `make lightdash-up`
+
+#### Architecture decisions ⬜
+- [ ] Fill `docs/adr/0006-metricflow-as-semantic-layer.md`
+- [ ] Fill `docs/adr/0007-fastapi-gateway-design.md`
+- [ ] Fill `docs/adr/0008-sql-guardrails.md`
+
+#### Sprint 1 verification gate
+- `curl localhost:8000/health` returns 200
+- `curl localhost:8000/catalog/metrics` returns ≥5 metrics
+- `POST /query` with `{"metric": "batting_average", "group_by": ["dim_player__full_name"]}` returns rows
+- `POST /query` with raw `DROP TABLE` returns 403 (sql_guardrails reject)
+- `mart_pipeline_cost_daily` populated after a clean ingest cycle
+- Lightdash + Metabase show the same metrics (semantic-layer portability proven)
+- Tests in `tests/unit/serving/` + `tests/integration/serving/` clean
+
+---
+
+### Sprint 2 — Agentic AI assistant with tools (~2 weeks) ⬜
+
+> Phase 5 finish. Single biggest interview differentiator.
+
+#### Agent + tools ⬜
+- [ ] `src/cip/serving/ai/chains/{agent.py, llm.py}` — LangGraph agent + Ollama (default) / Bedrock (config flag) client factories
+- [ ] Tools in `src/cip/serving/ai/tools/`:
+  - [ ] `search_metrics.py` — semantic search over MetricFlow catalog (nomic-embed-text via Ollama)
+  - [ ] `get_metric_definition.py`
+  - [ ] `query_metric.py` — calls FastAPI `/query`
+  - [ ] `lookup_player.py` — fuzzy match against `dim_player` + `gold.player_display_names`
+  - [ ] `explain_table.py` — returns dbt docs + column descriptions
+  - [ ] `generate_chart_spec.py` — returns Vega-Lite spec
+- [ ] `src/cip/serving/ai/prompt_registry/` — system + tool + few-shot prompts
+- [ ] `src/cip/serving/ai/retrieval/{embed_dbt_docs.py, vector_store.py}` — Qdrant (or FAISS fallback)
+- [ ] `src/cip/serving/ai/jobs/refresh_ai_metadata.py`
+- [ ] `orchestration/airflow/dags/dag_refresh_ai_metadata.py` (placeholder in `DagNames` becomes real)
+
+#### Chat UI + API ⬜
+- [ ] `apps/ai-studio/playground/chainlit_app.py` — Chainlit chat UI calling FastAPI `/chat`
+- [ ] `src/cip/serving/api/routers/chat.py` — SSE streaming endpoint
+- [ ] `infra/compose/compose.ai.yml` — `ollama`, `qdrant`, `chainlit`
+
+#### Eval ⬜
+- [ ] `apps/ai-studio/evaluation/eval_questions.yml` — ~30 golden questions with expected metrics/SQL
+- [ ] `apps/ai-studio/evaluation/run_eval.py` — runs golden set, reports accuracy + latency
+- [ ] `make ai-eval`
+
+#### Architecture decisions ⬜
+- [ ] Fill `docs/adr/0009-langgraph-agent-design.md` (tools-first vs RAG-first)
+
+#### Sprint 2 verification gate
+- Chainlit UI at `localhost:8100` answers *"Virat Kohli batting average in ODIs since 2020"* end-to-end
+- `make ai-eval` ≥80% accuracy
+- Attempt to issue destructive SQL via chat is refused at `sql_guardrails`
+- Agent calls visible in Tempo (one OTEL trace per agent turn)
+- `dag_refresh_ai_metadata` runs nightly; rebuilds embeddings + metric catalog cache
+
+---
+
+### Sprint 3 — Cloud-ready: BigQuery target + Terraform plan (~1 week) ⬜
+
+> Proves OLAP portability + IaC discipline. JD-direct hit on BigQuery, GCP, Terraform.
+
+#### BigQuery secondary target ⬜
+- [ ] `scripts/sync_silver_to_bq.py` — uses `PolarsIcebergReader` → `google-cloud-bigquery` load jobs; idempotent on `(_snapshot_date, _row_hash)`
+- [ ] `orchestration/airflow/dags/sync_silver_to_bigquery.py` — daily; downstream of Silver DAGs
+- [ ] `models/dbt/profiles.yml` — `bq_dev` target
+- [ ] `models/dbt/dbt_project.yml` — target-aware materialization (BQ `partition_by` + `cluster_by`; DuckDB no-op)
+- [ ] `models/dbt/models/sources.yml` — Jinja-switched source schemas via `{{ target.name }}`
+- [ ] `pyproject.toml` — `dbt-bigquery`, `google-cloud-bigquery`
+- [ ] `make bq-sync`, `make bq-build`, `make tf-plan-bq`
+
+#### Terraform ⬜
+- [ ] `infra/terraform/bigquery/{main, variables, outputs}.tf` — BQ dataset + service account + IAM
+- [ ] `infra/terraform/aws/{main, variables, outputs}.tf` — S3 + Glue + EMR Serverless + MWAA + Athena (plan-only)
+- [ ] `docs/runbooks/bigquery_setup.md`
+
+#### Architecture decisions ⬜
+- [ ] Fill `docs/adr/0005-bigquery-as-secondary-target.md`
+
+#### Sprint 3 verification gate
+- `make tf-plan-bq` → clean plan; provisioning the dataset works
+- `make bq-sync` populates `cricket_silver.*` from local Iceberg
+- `cd models/dbt && dbt build --target bq_dev` runs all marts + tests on BigQuery
+- Row counts match DuckDB target for every Gold table
+- `make tf-plan-aws` clean (no apply)
+- FastAPI `/query` returns identical numbers from DuckDB and BigQuery via env-var swap
+
+---
+
+### Sprint 4 — Scale generator + dashboard finish + portfolio polish (~1.5 weeks) ⬜
+
+> Public-facing finish. Story complete.
+
+#### Scale + perf ⬜
+- [ ] `scripts/synth/generate_synthetic_deliveries.py` — N=100M realistic delivery rows
+- [ ] `docs/perf/scale_test.md` — DuckDB vs BigQuery: query plans, scanned bytes, wall-time before/after partition pruning + clustering
+- [ ] `tests/integration/perf/test_partition_pruning.py`
+
+#### Player portfolio dashboard (Observable Framework, M3–M22) ⬜
+- [ ] M3 — design system tokens (`dashboard/src/styles/`)
+- [ ] M4–M10 — Python data loaders for batting career, season heatmap, dismissal types, opponent matchups, venue performance
+- [ ] M11–M20 — D3 + Observable Plot components (timeline river, records wall, KPI strip, dismissal lab, opponent chord)
+- [ ] M21 — page assembly (`dashboard/src/index.md`)
+- [ ] M22 — embedded Chainlit chat widget (`dashboard/src/ai-chat.md`)
+
+#### Portfolio polish ⬜
+- [ ] `docs/portfolio/demo_script.md` — interview demo walkthrough
+- [ ] `docs/portfolio/demo.gif` (or `.mp4`) — recorded walkthrough
+- [ ] `README.md` — top-level diagram + OSS↔Enterprise mapping + "what this demonstrates" section
+- [ ] Updated `docs/architecture/as-built.md` reflecting Sprint 0–4 components
+
+#### Architecture decisions ⬜
+- [ ] Write `docs/adr/0010-scale-strategy.md`
+
+#### Sprint 4 verification gate
+- `make synth-100m` builds `silver.deliveries_synth` (~100M rows)
+- Representative query runs <30s on DuckDB, <10s on BigQuery (with documented EXPLAIN ANALYZE deltas)
+- `cd dashboard && npm run build` succeeds; M21 pages render
+- Embedded AI chat works in dashboard
+- Demo video covers: data flow → lineage → cost → AI → BigQuery parity
+- All ADRs 0001–0010 complete
+
+---
+
+## Cross-sprint verification (end of revamp v2)
+
+After Sprint 0–4, the following must all be true:
+
+1. `make up && make obs-up && make api-up && make ai-up && make lightdash-up` brings the full stack online
+2. Triggering `ingest_all_match_data_bronze` shows: Marquez lineage Bronze→Silver→Gold (incl. BigQuery sync); Grafana metrics; `control.pipeline_cost_event` populated; Lightdash dashboards reflect the run
+3. `dbt build` clean on both `dev` (DuckDB) and `bq_dev` (BigQuery); 50+ tests pass
+4. FastAPI `/query` returns identical results from both targets
+5. AI assistant `make ai-eval` ≥80%
+6. Observable dashboard renders M21 + embedded AI chat
+7. Lightdash dashboards mirror the same metrics through MetricFlow
+8. `make synth-100m` + `docs/perf/scale_test.md` document partition-pruning wins
+9. ADRs 0001–0010 each have Decision/Context/Consequences/Alternatives/Status
+10. `make dag-validate` clean; `pytest` clean; `pre-commit run --all-files` clean
+
+---
+
+## Sequencing variants
+
+- **Linear** (default): 0 → 1 → 2 → 3 → 4
+- **API-first** (cloud parity before agent): 0 → 1 → 3 → 2 → 4
+- **Dashboard-led** (recruiter visibility urgent): 0 → 4 (player dashboard + scale) → 1 → 2 → 3
+- **JD-only** (Harness-only push, ~3 weeks): 0 → 1 — observability + dbt depth + semantic layer + FastAPI + FinOps mart + Lightdash; skip AI, BQ, scale, dashboard for now
+
+---
+
+## Reference
+
+- **Target-state architecture:** `docs/architecture/hld-hla.md`
+- **Current snapshot:** `docs/architecture/as-built.md`
+- **Data flow:** `docs/architecture/data-flow.md`
+- **Service interactions:** `docs/architecture/service-interactions.md`
+- **Open standards principle:** `docs/adr/0004-open-standards-first.md`
+- **Developer cheat-sheet:** `docs/planning_dev.md`
+- **Job module reference:** `docs/jobs.md`
+- **Runbooks:** `docs/runbooks/`
+- **Personal scratch plan:** `~/.claude/plans/hi-soft-prism.md`

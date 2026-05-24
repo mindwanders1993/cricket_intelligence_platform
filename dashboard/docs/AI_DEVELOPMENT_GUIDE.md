@@ -1,10 +1,16 @@
 # Dashboard Development Guide — AI-Assisted Workflow
 
 **Project:** Virat Kohli portfolio dashboard (Cricket Intelligence Platform)
+**Scope:** This guide covers the **player-portfolio dashboard** only — Observable Framework, custom D3 visuals, cinematic dark theme. It is **one of two BI surfaces** in the platform.
 **Stack:** Observable Framework + Python data loaders + DuckDB + D3 + Observable Plot
 **AI workflow:** Claude (plan/review/teach) ⇄ mm-claude / Minimax M2.5 (execute) ⇄ You (direct/validate)
 
-This document is the operational playbook for building the rest of the dashboard. Every module has its own prompt and validation criteria — copy-paste ready.
+> **The two-dashboard split (revamp v2):**
+> - **Player portfolio (this guide)** → Observable Framework at `dashboard/`, port 3030, reads DuckDB direct. Custom D3 visuals, cinematic theme, public-facing.
+> - **Platform / ops** → Lightdash at `infra/lightdash/` (Sprint 1), port 8082, semantic-layer-driven via dbt MetricFlow. Pipeline health, FinOps cost mart, data quality. Operator-facing.
+> Same Gold layer underneath; different surface for different jobs. See `docs/architecture/hld-hla.md` §7.4 and `docs/planning.md` Sprint 1.
+
+This document is the operational playbook for building the rest of the player dashboard. Every module has its own prompt and validation criteria — copy-paste ready.
 
 ---
 
@@ -44,12 +50,15 @@ Build a player-portfolio dashboard with Virat Kohli as the showcase. Architectur
 ### Status
 - ✅ **M1 — Observable Framework scaffold** (commit `408894a` on branch `feat/dashboard-scaffold`)
 - ✅ M2 — Project structure cleanup
-- ⬜ M3 — Design system (CSS tokens)
-- ⬜ M4–M10 — Python data loaders
-- ⬜ M11–M20 — Chart components
-- ⬜ M21 — Page assembly
-- ⬜ M22–M23 — Interactivity
-- ⬜ M24–M27 — Polish
+- ⬜ M3 — Design system (CSS tokens) *(parked until Sprint 4 of revamp v2)*
+- ⬜ M4–M10 — Python data loaders *(parked — Sprint 4)*
+- ⬜ M11–M20 — Chart components *(parked — Sprint 4)*
+- ⬜ M21 — Page assembly *(parked — Sprint 4)*
+- ⬜ M22 — Interactivity + embedded AI chat (Chainlit iframe) *(depends on Sprint 2 — AI assistant)*
+- ⬜ M23 — Cross-filter interactivity *(parked — Sprint 4)*
+- ⬜ M24–M27 — Polish *(parked — Sprint 4)*
+
+> **Sequencing note:** Dashboard M3–M27 are parked at M2 until the revamp-v2 platform deepening lands (Sprints 0–3). Reason: M22 depends on the AI assistant (Sprint 2), and the dashboard's embedded analytics depend on the Sprint 0 MetricFlow semantic layer + Sprint 1 FastAPI gateway. Resuming M3+ in Sprint 4 means the dashboard surfaces work that's already shipped, not work-in-flight. See `docs/planning.md` for the full sequence.
 
 ---
 

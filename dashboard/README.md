@@ -4,6 +4,15 @@
 player-level cricket analytics, backed by the Gold layer in
 `storage/duckdb/cricket.duckdb`.
 
+> **Scope:** This is the **player-portfolio dashboard** (Virat Kohli showcase). It is **one of two BI surfaces** in the platform.
+>
+> - **Player portfolio (this app)** → Observable Framework, port 3030, custom D3 visuals, public-facing.
+> - **Platform / ops dashboard** → Lightdash at `infra/lightdash/` (planned in Sprint 1 of revamp v2), port 8082, semantic-layer-driven via dbt MetricFlow. Pipeline health + FinOps + DQ.
+>
+> Same DuckDB Gold layer underneath; different surface per audience. See `docs/architecture/hld-hla.md` §7.4 and `dashboard/docs/AI_DEVELOPMENT_GUIDE.md`.
+>
+> **Current status:** M1 (scaffold) + M2 (cleanup) ✅. M3–M27 parked at M2 until revamp-v2 platform deepening (Sprints 0–3) lands, then resumed in Sprint 4 with M22 wiring in the AI assistant chat widget. See `docs/planning.md`.
+
 ## Prerequisites
 
 - Node.js v18 or v20 LTS

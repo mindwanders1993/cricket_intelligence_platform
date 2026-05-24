@@ -272,3 +272,25 @@ Resolution order: env vars > `.env` file > `conf/base/*.yaml` > Pydantic default
 | dbt | 40 | `poetry run dbt test` from `models/dbt/` |
 
 All unit tests run without external dependencies (I/O mocked).
+
+---
+
+## Revamp v2 — additions in flight
+
+The original roadmap (`README.md` §20) called for Phases 5 (AI/MLOps), 6 (AWS cloud), and 7 (Portfolio hardening) which were deferred after Phase 4 shipped. Those are now being executed together as **revamp v2** with open-standards extensions. This `as-built.md` document will be updated as each sprint lands.
+
+| Sprint | Adds to this snapshot | See |
+|---|---|---|
+| **Sprint 0** — Observability + dbt depth | `src/cip/observability/{lineage,telemetry,cost_emission}.py`; `compose.observability.yml` (Marquez + Grafana + Prometheus + Tempo + OTEL Collector); `control.pipeline_cost_event`; dbt SCD2 (`dim_player_scd2`) + incremental facts + MetricFlow semantic models + 5 metrics + exposures; Soda Core baseline; ADRs 0001–0004 | `docs/planning.md` → Sprint 0 |
+| **Sprint 1** — FastAPI + FinOps + Lightdash | `src/cip/serving/api/` (FastAPI gateway with `/health`, `/metrics`, `/query`, `/explain`, `/catalog/*`); `mart_pipeline_cost_daily` + `mart_top_expensive_tasks` + `mart_data_freshness`; Lightdash dashboards (config-as-code); ADRs 0006–0008 | `docs/planning.md` → Sprint 1 |
+| **Sprint 2** — Agentic AI assistant | `src/cip/serving/ai/{chains,tools,prompt_registry,retrieval,jobs}/`; Chainlit chat UI in `apps/ai-studio/`; `dag_refresh_ai_metadata` becomes real; ADR 0009 | `docs/planning.md` → Sprint 2 |
+| **Sprint 3** — BigQuery target + Terraform | `bq_dev` dbt target; `scripts/sync_silver_to_bq.py`; `sync_silver_to_bigquery` DAG; `infra/terraform/{bigquery,aws}/`; ADR 0005 | `docs/planning.md` → Sprint 3 |
+| **Sprint 4** — Scale + dashboard + polish | `scripts/synth/generate_synthetic_deliveries.py` (100M rows); `docs/perf/scale_test.md`; Observable dashboard M3–M22 (player portfolio + embedded AI chat); ADR 0010 | `docs/planning.md` → Sprint 4 |
+
+**Reference docs (target state):**
+- `docs/architecture/hld-hla.md` — full target architecture
+- `docs/architecture/data-flow.md` — per-record flow + side-channel emissions
+- `docs/architecture/service-interactions.md` — port + lock + auth matrix
+- `docs/architecture/repo-structure.md` — codebase navigation
+
+When a sprint ships, update the relevant table sections above (DAG inventory, Iceberg catalog layout, control schema, BI layer) inline and append the change to this section's row with a ✅.

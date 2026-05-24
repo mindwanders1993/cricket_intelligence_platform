@@ -100,22 +100,28 @@ The JSON files are nested and hierarchical, with match metadata, participant ide
 - Historical batch ingestion from Cricsheet downloads.
 - Register ingestion and identity modeling (first vertical slice).
 - Bronze, Silver, and Gold layers on Apache Iceberg open table format.
-- Workflow orchestration with Airflow using KubernetesExecutor.
-- Workload-specific transformation using Polars (ingestion) and PySpark-on-Kubernetes (transformation).
-- dbt Core modeling and tests for Gold marts backed by DuckDB.
-- Superset dashboards for executive and analyst use cases.
-- MLflow-managed first predictive workflow.
-- FastAPI and local LLM-backed AI analytical assistant (Ollama locally, AWS Bedrock on cloud).
-- Observability and quality monitoring with Prometheus and Grafana.
-- Full AWS cloud deployment with Terraform IaC.
+- Workflow orchestration with Airflow.
+- Workload-specific transformation using Polars (ingestion) and PySpark (transformation).
+- dbt Core modeling, tests, and **MetricFlow semantic layer** for Gold marts; DuckDB primary target + BigQuery secondary target.
+- **Two BI surfaces over a shared semantic layer:** Metabase (SQL-card, ad-hoc) and Lightdash (semantic-driven, ops + FinOps).
+- **Observable Framework player-portfolio dashboard** (Virat Kohli showcase).
+- **OpenLineage + OpenTelemetry observability** through Marquez (lineage), Grafana + Prometheus (metrics), and Tempo (traces).
+- **FinOps-style pipeline cost telemetry mart** capturing executor-seconds and rows/bytes per task — local analog of Cloud Cost Management.
+- **Soda Core declarative data quality** layered on top of dbt-tests.
+- MLflow experiment tracking (live; first ML model training deferred to post-v1).
+- **FastAPI gateway** (`/health`, `/metrics`, `/query`, `/explain`, `/catalog/*`, `/chat`) with AST-walked SQL guardrails.
+- **Agentic AI assistant** (LangGraph + Ollama local / AWS Bedrock cloud) with 5+ tools, MetricFlow grounding, dbt-docs RAG, and a Chainlit chat UI in `apps/ai-studio/`.
+- AWS deployment-ready: Terraform module that provisions equivalent workloads on AWS S3 + Glue + EMR Serverless + MWAA + Athena (plan-only in v1; apply when an AWS account is funded).
 
 ### 5.2 Deferred scope
 
 - Real-time scoring ingestion from live feeds.
-- Kafka-centered streaming architecture.
+- Apache Kafka / Redpanda streaming architecture (re-open if a streaming-shaped JD warrants it).
 - Multi-tenant SaaS exposure for external users.
 - External commercial enrichment feeds.
 - Kubeflow-based ML pipelines (MLflow covers v1 MLOps needs).
+- Java / Go microservices (Python-only for v1).
+- Production AWS deployment with billing (Terraform `plan` is the v1 deliverable).
 
 ## 6. High level architecture
 
@@ -129,7 +135,7 @@ The platform is divided into nine logical layers:
 4. **Open table layer** — Apache Iceberg-managed tables (Iceberg REST Catalog locally, AWS Glue Catalog in production).
 5. **Compute and transformation layer** — Polars for ingestion, PySpark-on-Kubernetes for Silver transformation.
 6. **Analytics engineering layer** — dbt Core for SQL models, tests, and docs (DuckDB adapter).
-7. **Consumption and intelligence layer** — DuckDB, Superset, FastAPI, Ollama/Bedrock, LangChain, MLflow.
+7. **Consumption and intelligence layer** — DuckDB, Metabase + Lightdash (semantic-layer BI), Observable Framework (player portfolio dashboard), FastAPI gateway, LangGraph agent (Ollama / Bedrock), Chainlit (chat UI), MLflow.
 8. **Observability layer** — Prometheus, Grafana, data quality outputs, and run metadata.
 9. **Cloud infrastructure layer** — AWS S3, RDS, EKS, EMR on EKS, Glue Catalog, Terraform IaC.
 
@@ -141,17 +147,20 @@ The platform uses a **two-plane model** that separates stateful infrastructure f
 ┌──────────────────────────────────────────────────────────────────┐
 │  INFRASTRUCTURE PLANE  (stateful — always-on services)           │
 │  Local:  Docker Compose  →  MinIO + PostgreSQL + Iceberg REST    │
-│                              + Superset + Prometheus + Grafana   │
+│                              + Metabase + Lightdash + Marquez    │
+│                              + Prometheus + Grafana + Tempo      │
 │  Cloud:  AWS Managed     →  S3 + RDS + Glue Catalog              │
-│                              + Superset on ECS + CloudWatch      │
+│                              + ECS (BI) + CloudWatch + Datadog   │
 └──────────────────────────────────────────────────────────────────┘
                     ↕  S3 API / JDBC / REST
 ┌──────────────────────────────────────────────────────────────────┐
 │  WORKLOAD PLANE  (ephemeral — pod-per-task compute)              │
-│  Local:  Docker Desktop K8s  →  Airflow + Spark Pods             │
-│                                  + MLflow + FastAPI + Ollama     │
-│  Cloud:  AWS EKS             →  Airflow + EMR on EKS             │
-│                                  + MLflow + FastAPI + Bedrock    │
+│  Local:  Docker Compose (→ k3d)  →  Airflow + Spark + MLflow     │
+│                                      + FastAPI + Ollama + Qdrant │
+│                                      + Chainlit + Observable     │
+│  Cloud:  AWS EKS                 →  Airflow + EMR Serverless     │
+│                                      + MLflow + FastAPI          │
+│                                      + Bedrock + OpenSearch      │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -759,8 +768,10 @@ cricket-intelligence-platform/
 ├── models/
 │   └── dbt/                 # staging, intermediate, marts, tests, docs
 ├── apps/
-│   ├── superset/
-│   └── ai-studio/
+│   ├── ai-studio/             # Chainlit chat UI + golden-set eval (Sprint 2)
+│   └── fastapi/               # symlink to src/cip/serving/api
+├── dashboard/                 # Observable Framework player portfolio (Kohli)
+├── infra/lightdash/           # Lightdash dashboards as config-as-code (Sprint 1)
 ├── observability/
 │   ├── prometheus/
 │   ├── grafana/
@@ -804,28 +815,44 @@ cricket-intelligence-platform/
 | AWS cost overrun | Medium | Spot instances on EKS; EMR Serverless for bursty jobs; monthly cost ceiling alerting. |
 | Weak data contracts | High | DQ BLOCK checks prevent bad data from advancing; dbt tests on Gold layer. |
 
-## 20. Recommended phased implementation path
+## 20. Phased implementation path
 
-### Phase 1 — Environment and foundation
-Docker Compose infrastructure, Kubernetes local cluster, `.env.example`, `pyproject.toml`, shared platform modules (`settings`, `exceptions`, `logging`, `enums`, `naming`, `minio`, `writers`, `readers`), bootstrap SQL, Makefile.
+Phase 1–4 are complete and on `main`. Phases 5–7 (the deferred AI/MLOps, cloud, and portfolio-hardening phases) are executed together in the **current revamp v2** as Sprints 0–4. See `docs/planning.md` for the canonical task lists and `~/.claude/plans/hi-soft-prism.md` for the personal scratch version.
 
-### Phase 2 — Registry pipeline (first vertical slice)
-`ingest_people_and_names_bronze` + `ingest_people_and_names_silver` — download → landing → schema drift detection → Bronze Iceberg (Polars) → Silver identity tables (Polars) → DQ checks → control metadata. **This is the production-readiness baseline.**
+### Foundation phases (shipped)
 
-### Phase 3 — Match ingestion and Silver explosion
-`ingest_all_match_data_bronze` / `ingest_two_day_match_data_bronze` — 21k+ JSON files to Bronze (Polars) with audit-skip and revision tracking. `ingest_all_match_data_silver` / `ingest_two_day_match_data_silver` — PySpark nested JSON explosion to Silver matches, innings, deliveries, wickets, officials, players.
+#### Phase 1 — Environment and foundation ✅
+Docker Compose infrastructure, shared platform modules (`settings`, `exceptions`, `logging`, `enums`, `naming`, `minio`, `writers`, `readers`), bootstrap SQL, Makefile, 16 settings tests.
 
-### Phase 4 — Gold layer and BI
-`ingest_all_match_data_gold` / `ingest_two_day_match_data_gold` — dbt Core star schema materialisation (full-refresh and incremental). DuckDB serving layer. Metabase dashboards (executive + analyst personas).
+#### Phase 2 — Registry pipeline (first vertical slice) ✅
+`ingest_people_and_names_bronze` + `ingest_people_and_names_silver` — download → landing → schema drift detection → Bronze Iceberg (Polars) → Silver identity tables (Polars) → DQ checks → control metadata.
 
-### Phase 5 — AI and MLOps
-FastAPI + LangChain + Ollama AI copilot. MLflow win-probability experiment. `dag_train_ml_model` + `dag_refresh_ai_metadata`.
+#### Phase 3 — Match ingestion and Silver explosion ✅
+`ingest_all_match_data_bronze` / `ingest_two_day_match_data_bronze` — 21k+ JSON files to Bronze (Polars) with audit-driven dedup via `control.match_file_audit` and `(match_id, revision)` revision tracking. `ingest_all_match_data_silver` / `ingest_two_day_match_data_silver` — PySpark explodes nested JSON to Silver matches, innings, deliveries, wickets, officials, players, teams, venues, competitions.
 
-### Phase 6 — AWS cloud deployment
-Terraform IaC for EKS, S3, RDS, Glue Catalog, IAM. Migrate config endpoints. Validate full pipeline on AWS. Cost-optimise with spot instances and EMR Serverless.
+#### Phase 4 — Gold layer and BI ✅
+`ingest_all_match_data_gold` / `ingest_two_day_match_data_gold` — dbt Core star schema (6 dims + 5 facts + 7 marts, 40 tests). DuckDB serving layer (materialised native tables). Metabase dashboards.
 
-### Phase 7 — Portfolio hardening
-Observability dashboards, runbooks, CI/CD, interview demo assets, polished README diagrams, resume bullets.
+### Revamp v2 (in flight — see `docs/planning.md`)
+
+#### Sprint 0 — Observability retrofit + dbt depth foundation ⬜
+OpenLineage + OpenTelemetry instrumentation in writers and DAGs (Marquez + Grafana + Tempo); `control.pipeline_cost_event` ledger; dbt SCD2 on `dim_player`, incremental on `fact_delivery`/`fact_player_match`, MetricFlow semantic layer with 5 declarative metrics, exposures, source freshness SLAs; Soda Core baseline DQ; ADRs 0001–0004 filled.
+
+#### Sprint 1 — FastAPI gateway + FinOps mart + Lightdash ⬜
+`src/cip/serving/api/` FastAPI app exposing `/health`, `/metrics`, `/query` (MetricFlow-backed), `/explain`, `/catalog/*`, `/chat`; AST-walked SQL guardrails; `mart_pipeline_cost_daily` + `mart_top_expensive_tasks` + `mart_data_freshness`; Lightdash dashboards (pipeline health, FinOps, DQ); Metabase FinOps mirror; ADRs 0006–0008.
+
+#### Sprint 2 — Agentic AI assistant ⬜
+LangGraph agent with 5+ tools (`search_metrics`, `get_metric_definition`, `query_metric`, `lookup_player`, `explain_table`, `generate_chart_spec`); Ollama local + Bedrock cloud; Qdrant for dbt-docs RAG; Chainlit chat UI in `apps/ai-studio/playground`; golden-set eval ≥80%; `dag_refresh_ai_metadata` implemented; ADR 0009.
+
+#### Sprint 3 — Cloud-ready (BigQuery + Terraform) ⬜
+`dbt-bigquery` adapter, `bq_dev` target, `scripts/sync_silver_to_bq.py`, daily sync DAG; Terraform module for BigQuery (apply) and AWS S3+Glue+EMR Serverless+MWAA+Athena (plan-only); ADR 0005.
+
+#### Sprint 4 — Scale + dashboard + portfolio polish ⬜
+100M+ row synthetic delivery generator + perf write-up (DuckDB vs BigQuery); Observable Framework player-portfolio dashboard M3–M22 (design system, data loaders, D3 components, page assembly, embedded AI chat); demo video; ADR 0010.
+
+### Open-standards principle
+
+Every revamp-v2 component is chosen to speak an **open protocol** (S3 API, Iceberg REST, OpenLineage, OpenTelemetry, ANSI SQL, dbt manifest, Kafka API, OpenAPI) with a managed enterprise cousin (AWS S3 / Glue / EMR / MWAA / Athena, Datadog, DataHub, Atlan, Looker, etc.). Endpoint config — not code — is the local-to-cloud delta. See `docs/adr/0004-open-standards-first.md`.
 
 ## 21. Operational Note: Host vs. Container Environment Variables
 
@@ -840,4 +867,30 @@ The platform's `.env.example` and Compose files are configured to handle this by
 
 ## 22. Architecture review summary
 
-The most robust version of this architecture is an **open-source cricket lakehouse platform centered on AWS S3 / Apache Iceberg / Airflow (KubernetesExecutor) / Polars / PySpark-on-Kubernetes / DuckDB / dbt Core / Superset / MLflow / and a FastAPI-LangChain AI layer**. The platform is developed locally using Docker Compose for stateful infrastructure and Docker Desktop Kubernetes for compute workloads, then deployed to AWS EKS + EMR + S3 + Glue Catalog with near-zero code changes. This design is technically defensible, cloud-portable, Kubernetes-native, interview-ready, and demonstrates senior-level engineering discipline from ingestion through AI/ML serving.
+The platform is an **open-source cricket lakehouse centered on AWS S3 / Apache Iceberg / Airflow / Polars / PySpark / DuckDB + BigQuery / dbt Core + MetricFlow / Metabase + Lightdash + Observable Framework / OpenLineage + OpenTelemetry / FastAPI + LangGraph (Ollama/Bedrock) / MLflow**. The platform is developed locally on Docker Compose and lifts to AWS S3 + Glue + EMR Serverless + MWAA + Athena via a single Terraform module — every component speaks an open protocol so endpoint config, not code, is the local-to-cloud delta.
+
+This design is technically defensible, cloud-portable, interview-ready, and demonstrates senior-level engineering discipline across the full software-delivery lifecycle: governed batch ingestion, dimensional modeling with SCD2 + incremental + semantic layer, lineage + telemetry + cost attribution, declarative DQ, and a guardrailed agentic AI surface grounded in the same semantic layer that drives BI.
+
+## 23. OSS ↔ Enterprise mapping
+
+Every chosen tool has a managed cloud cousin and an open standard binding the two:
+
+| Concern | OSS (this project) | Enterprise cousin | Open standard |
+|---|---|---|---|
+| Object storage | MinIO | AWS S3 / GCS / Azure Blob | S3 API |
+| Table format | Apache Iceberg | S3 Tables / Unity / Snowflake Iceberg | Iceberg spec |
+| Catalog | Iceberg REST | AWS Glue / Unity / Nessie | Iceberg REST |
+| Batch compute | Spark / Polars | EMR / Databricks / Dataproc | Spark API |
+| OLAP serving | DuckDB + BigQuery (free tier) | BigQuery / Snowflake / Athena / ClickHouse | ANSI SQL |
+| Transform | dbt-core + MetricFlow | dbt Cloud / SQLMesh | dbt manifest |
+| Orchestration | Apache Airflow | MWAA / Composer / Astronomer | Python DAG |
+| Lineage | OpenLineage → Marquez | DataHub / Atlan / Unity | OpenLineage spec |
+| Telemetry | OTEL → Prometheus + Grafana + Tempo | Datadog / New Relic | OpenTelemetry |
+| BI (semantic) | Metabase + Lightdash | Looker / Tableau / Power BI | dbt semantic layer |
+| BI (custom viz) | Observable Framework | bespoke React / Tableau | static SQL+JS |
+| DQ | dbt-tests + Soda Core | Soda Cloud / Monte Carlo / Anomalo | Soda Checks Language |
+| API gateway | FastAPI | Same on any cloud | OpenAPI |
+| Agent runtime | LangGraph + Ollama | LangChain Cloud / Bedrock / Vertex AI | OpenAI API |
+| Vector store | Qdrant | Pinecone / pgvector / OpenSearch | — |
+| ML tracking | MLflow OSS | SageMaker / Vertex AI / Databricks MLflow | MLflow API |
+| IaC | Terraform OSS | Same Terraform → EKS / GKE / AKS | Terraform HCL |

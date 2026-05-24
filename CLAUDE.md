@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Revamp v2 in flight** — see `docs/planning.md` (canonical execution plan) and `docs/architecture/hld-hla.md` (target architecture). The platform's foundation through Gold + Metabase is complete (Phases 1–4); Sprints 0–4 add observability, semantic layer, FastAPI gateway, agentic AI, BigQuery target, and player dashboard. **All new components must follow the open-standards principle in `docs/adr/0004-open-standards-first.md`** — every dependency must speak an open protocol with a managed enterprise cousin so cloud migration is config, not rewrite.
+
 ## Working agreement (Karpathy skills)
 
 Behavioural guardrails for agent-assisted edits in this repo. Adapted from [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills). These bias toward caution over speed — use judgement on trivial tasks.
@@ -377,6 +379,62 @@ Metabase v0.60.6 (OSS) + community DuckDB driver (`motherduckdb/metabase_duckdb_
 - Cricsheet player names are abbreviated initials (`V Kohli`, not `Virat Kohli`). Any consumer that needs display names must maintain a separate alias table — do not assume full names exist in `gold.fact_delivery.batter` or `gold.mart_player_batting.player_name`.
 - `player_of_match` in match JSON is an array and can contain the same name twice (data artefact). Always dedup with `QUALIFY ROW_NUMBER() OVER (PARTITION BY match_id, player_name ...)` when exploding this array.
 - Match JSON files in MinIO are partitioned by archive: `match_data/json/snapshot_date={date}/archive={stem}/…`. Anything that walks the JSON prefix (Bronze loader, DQ checks, manifest reader) must pass `archive_file` so it scopes to the right segment. Code paths that hardcode the prefix without the `archive=` segment will silently read another pipeline's files.
+
+## Revamp v2 conventions (kick in as each sprint lands)
+
+### Observability emission pattern (Sprint 0)
+
+Every writer call is wrapped with OTEL span + OpenLineage event + cost emission. Helpers in `src/cip/observability/{telemetry,lineage,cost_emission}.py`. **Do not** add ad-hoc logging that bypasses these — the cost mart and Marquez UI depend on the emission being consistent.
+
+### dbt patterns (Sprint 0)
+
+- SCD2 dimensions use the snapshot + view pattern. Current rows: `dim_<entity>` (view); history: `dim_<entity>_scd2`.
+- Incremental facts: `materialized='incremental'`, `unique_key`, `on_schema_change='append_new_columns'`, `incremental_strategy='delete+insert'` (DuckDB) / `'merge'` (BigQuery).
+- MetricFlow is the single source of truth — Metabase + Lightdash + FastAPI all consume the same metric definitions.
+
+### FastAPI conventions (Sprint 1)
+
+- Every route is OTEL-instrumented automatically (middleware).
+- All requests/responses are Pydantic models — never raw JSON.
+- SQL goes through `services/sql_guardrails.py` before execution; the AI agent has **no raw-SQL path**.
+- MetricFlow queries are first-class; raw `{sql}` mode is for authenticated ad-hoc reads only and goes through the AST walker.
+
+### AI agent conventions (Sprint 2)
+
+- LangGraph state machine in `src/cip/serving/ai/chains/agent.py`.
+- Tools live as one file per tool in `src/cip/serving/ai/tools/`.
+- Every tool returns a Pydantic model.
+- No raw SQL construction in tools — use MetricFlow client or parameterized helpers.
+- Golden eval at `apps/ai-studio/evaluation/eval_questions.yml` is a merge-gate (≥80% pass rate).
+- LLM provider switchable via `AISettings.llm_provider` — same prompts, same tools.
+
+### BigQuery target (Sprint 3)
+
+- Both `dbt build --target dev` (DuckDB) and `dbt build --target bq_dev` (BigQuery) must succeed before a Sprint 3 PR merges.
+- Models use `{{ target.name }}` Jinja for target-aware materialization (BQ `partition_by` + `cluster_by` vs DuckDB no-op).
+- Sync via `scripts/sync_silver_to_bq.py` (uses existing `PolarsIcebergReader`).
+
+### Open-standards checklist (before adding any new dependency)
+
+1. What open protocol does it speak?
+2. What's the managed cloud cousin?
+3. Is endpoint config the only delta to migrate?
+
+Reject otherwise. See `docs/adr/0004-open-standards-first.md` for worked examples.
+
+### Tooling additions (revamp v2)
+
+| Tool | Sprint | Use |
+|---|---|---|
+| `openlineage-airflow` + `openlineage-python` | 0 | Lineage emission |
+| `opentelemetry-api/sdk/exporter-otlp` | 0 | Spans + metrics |
+| `dbt-metricflow` | 0 | Semantic layer CLI: `mf list metrics`, `mf query` |
+| `soda-core-duckdb` | 0 | Declarative DQ: `soda scan -d cricket -c quality/soda/configuration.yml quality/soda/checks/*.yml` |
+| `dbt-bigquery`, `google-cloud-bigquery` | 3 | BQ adapter + sync |
+| `langgraph`, `qdrant-client`, `chainlit` | 2 | Agent runtime + vector store + chat UI |
+| `fastapi`, `uvicorn[standard]` | 1 | Gateway |
+
+---
 
 ## graphify
 
