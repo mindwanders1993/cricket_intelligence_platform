@@ -2,6 +2,10 @@
 
 This file provides foundational mandates and project context for Gemini CLI when working in this repository.
 
+> **Revamp v2 in flight** — see `docs/planning.md` (canonical execution plan) and `docs/architecture/hld-hla.md` (target architecture). The platform's foundation through Gold + Metabase is complete (Phases 1–4); Sprints 0–4 add observability, semantic layer, FastAPI gateway, agentic AI, BigQuery target, and player dashboard. **All new components must follow the open-standards principle in `docs/adr/0004-open-standards-first.md`** — every dependency must speak an open protocol with a managed enterprise cousin so cloud migration is config, not rewrite.
+>
+> Revamp-v2 conventions (observability emission, dbt SCD2/incremental, MetricFlow, FastAPI patterns, AI tool conventions, BigQuery target switching) mirror the CLAUDE.md "Revamp v2 conventions" section — see `CLAUDE.md` for the canonical list; mirror updates here when you change them.
+
 ## Core Mandates & Context
 
 - **Architecture:** Medallion architecture (Landing → Bronze → Silver → Gold).
